@@ -19,6 +19,14 @@ BROWSER_UA = (
 )
 
 HAS_CURL_CFFI = bool(importlib.util.find_spec('curl_cffi'))
+_IMPERSONATE_TARGETS = None
+
+_KVS_VIDEO_URL_PATTERNS = (
+    re.compile(r"video_url\s*:\s*'([^']+)'", re.I),
+    re.compile(r'video_url\s*:\s*"([^"]+)"', re.I),
+    re.compile(r"video_alt_url\s*:\s*'([^']+)'", re.I),
+    re.compile(r'video_alt_url\s*:\s*"([^"]+)"', re.I),
+)
 
 
 def _ffmpeg_path():
@@ -38,6 +46,60 @@ def _ffmpeg_path():
         if c.exists():
             return str(c)
     return None
+
+
+def _available_impersonate_targets():
+    global _IMPERSONATE_TARGETS
+    if _IMPERSONATE_TARGETS is not None:
+        return _IMPERSONATE_TARGETS
+
+    targets = []
+    if HAS_CURL_CFFI:
+        try:
+            result = subprocess.run(
+                ['yt-dlp', '--list-impersonate-targets'],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            output = (result.stdout or '') + (result.stderr or '')
+            for line in output.splitlines():
+                if 'unavailable' in line.lower():
+                    continue
+                match = re.match(r'^(\w+)\s+-\s+curl_cffi', line.strip(), re.I)
+                if match:
+                    targets.append(match.group(1).lower())
+        except Exception:
+            pass
+
+        if not targets:
+            try:
+                from curl_cffi.requests import Session
+                session = Session()
+                session.get(
+                    'https://example.com/',
+                    impersonate='chrome',
+                    timeout=8,
+                    verify=False,
+                )
+                targets.append('chrome')
+            except Exception:
+                pass
+
+    _IMPERSONATE_TARGETS = targets
+    return targets
+
+
+def _pick_impersonate_target(preferred=None):
+    available = _available_impersonate_targets()
+    if not available:
+        return None
+    if preferred and preferred.lower() in available:
+        return preferred.lower()
+    for candidate in (preferred, 'chrome', 'edge', 'firefox', 'safari'):
+        if candidate and candidate.lower() in available:
+            return candidate.lower()
+    return available[0]
 
 
 def _detect_browsers():
@@ -61,16 +123,16 @@ def _build_strategies():
         {'label': 'default', 'impersonate': None, 'cookies': None},
     ]
 
-    if HAS_CURL_CFFI:
-        for target in ('chrome', 'edge', 'firefox'):
-            strategies.append({'label': f'impersonate-{target}', 'impersonate': target, 'cookies': None})
+    for target in _available_impersonate_targets():
+        strategies.append({'label': f'impersonate-{target}', 'impersonate': target, 'cookies': None})
 
+    preferred_impersonate = _pick_impersonate_target('chrome')
     for browser in _detect_browsers():
         strategies.append({'label': f'cookies-{browser}', 'impersonate': None, 'cookies': browser})
-        if HAS_CURL_CFFI:
+        if preferred_impersonate:
             strategies.append({
                 'label': f'cookies+impersonate-{browser}',
-                'impersonate': 'chrome',
+                'impersonate': preferred_impersonate,
                 'cookies': browser,
             })
 
@@ -102,13 +164,14 @@ def _base_opts(impersonate=None, cookies_browser=None):
             'Sec-Fetch-Mode': 'navigate',
         },
         'extractor_args': {
-            'generic': {'impersonate': [impersonate or 'chrome']},
             'youtube': {'player_client': ['android', 'web', 'tv_embedded']},
         },
     }
 
-    if impersonate and HAS_CURL_CFFI:
-        opts['impersonate'] = impersonate
+    target = _pick_impersonate_target(impersonate)
+    if target:
+        opts['impersonate'] = target
+        opts['extractor_args']['generic'] = {'impersonate': [target]}
 
     if cookies_browser:
         try:
@@ -129,7 +192,78 @@ def _is_retriable(exc):
         '403', 'forbidden', '429', 'too many requests',
         'unable to download webpage', 'sign in', 'login',
         'confirm your age', 'bot', 'captcha', 'cloudflare',
+        'impersonate target', 'is not available', 'flashvars',
+        'unable to extract',
     ))
+
+
+def _should_try_kvs_player(url):
+    path = urlparse(url).path.lower()
+    return bool(re.search(r'/video/\d+', path)) or '/embed/' in path
+
+
+def _resolve_kvs_player(url):
+    page_url = url
+    headers = {
+        'User-Agent': BROWSER_UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': f'{urlparse(url).scheme}://{urlparse(url).netloc}/',
+    }
+
+    with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=30.0)) as client:
+        resp = client.get(url, headers=headers)
+        resp.raise_for_status()
+        html = resp.text
+
+    if 'kt_player' not in html.lower() and not any(p.search(html) for p in _KVS_VIDEO_URL_PATTERNS):
+        raise RuntimeError('Not a KVS player page')
+
+    stream_url = None
+    for pattern in _KVS_VIDEO_URL_PATTERNS:
+        match = pattern.search(html)
+        if match:
+            stream_url = match.group(1).replace('\\/', '/')
+            break
+    if not stream_url:
+        raise RuntimeError('KVS video_url not found')
+
+    title_match = re.search(r'<title>([^<]+)</title>', html, re.I)
+    title = title_match.group(1).strip() if title_match else 'Video'
+    title = re.sub(r'\s*[-|]\s*[^-|]+$', '', title).strip() or title
+
+    duration_match = re.search(r'video_duration\s*:\s*(\d+)', html, re.I)
+    duration = int(duration_match.group(1)) if duration_match else None
+
+    poster_match = (
+        re.search(r"poster_url\s*:\s*'([^']+)'", html, re.I)
+        or re.search(r'poster_url\s*:\s*"([^"]+)"', html, re.I)
+    )
+    thumbnail = poster_match.group(1).replace('\\/', '/') if poster_match else None
+
+    probe = _probe_direct_url(stream_url) or {
+        'ext': 'mp4',
+        'stream_type': 'progressive',
+        'title': title,
+        'filesize': None,
+        'content_type': 'video/mp4',
+        'headers': {
+            'User-Agent': BROWSER_UA,
+            'Referer': page_url,
+            'Accept': '*/*',
+        },
+    }
+    probe['title'] = title
+    probe['headers']['Referer'] = page_url
+
+    result = _direct_media_response(stream_url, probe)
+    result['url'] = page_url
+    result['title'] = title
+    result['duration'] = duration
+    result['thumbnail'] = thumbnail
+    result['site'] = urlparse(page_url).netloc
+    result['resolved_with'] = 'kvs-player'
+    return result
 
 
 def _extract(url, format_id=None, impersonate=None, cookies_browser=None):
@@ -678,7 +812,13 @@ def resolve_url(url, format_id=None):
     if is_magnet(url):
         return _resolve_magnet(url, format_id)
 
-    last_error = None
+    if _should_try_kvs_player(url):
+        try:
+            return _resolve_kvs_player(url)
+        except Exception as kvs_error:
+            last_error = kvs_error
+    else:
+        last_error = None
 
     for strategy in _build_strategies():
         try:

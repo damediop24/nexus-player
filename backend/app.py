@@ -191,7 +191,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.3.3',
+        'version': '2.3.4',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -201,7 +201,7 @@ def status():
         'mpv_client': True,
         'ffmpeg_available': bool(_ffmpeg_path()),
         'queue_length': len(queue),
-        'anti_bot': HAS_CURL_CFFI,
+        'anti_bot': bool(__import__('resolver')._available_impersonate_targets()),
         'browsers_detected': __import__('resolver')._detect_browsers(),
     }
 
