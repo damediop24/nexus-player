@@ -162,7 +162,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.0.0',
+        'version': '2.0.1',
         'lan_ip': _lan_ip(),
         'port': int(os.environ.get('PORT', 8899)),
         'mpv_available': bool(find_mpv()),
