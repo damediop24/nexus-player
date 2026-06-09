@@ -797,7 +797,11 @@ async function initStatus() {
   const remote = `http://${st.lan_ip}:${st.port}`;
   $('#remote-url').textContent = remote + ' (tap to copy)';
   $('#remote-url').onclick = () => { navigator.clipboard.writeText(remote); toast('Remote URL copied'); };
-  if (!st.mpv_available) $('#mpv-btn').style.opacity = '0.4';
+  const mpvBtn = $('#mpv-btn');
+  mpvBtn.style.opacity = '1';
+  mpvBtn.title = st.mpv_server
+    ? 'Open in MPV (server or local)'
+    : 'Open in local MPV on your PC';
   if (!st.torrent_available && !st.pikpak?.configured) {
     $('#torrent-add-btn').style.opacity = '0.4';
   } else {
@@ -976,13 +980,88 @@ $('#resolve-btn').addEventListener('click', async () => {
   } catch (e) { toast(e.message, 4000); }
 });
 
-$('#mpv-btn').addEventListener('click', async () => {
-  const url = urlInput.value.trim() || currentMedia?.source_url;
-  if (!url) return;
+function toAbsoluteUrl(path) {
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) return path;
+  return new URL(path, window.location.origin).href;
+}
+
+async function copyText(text) {
   try {
-    await api('/api/mpv', { method: 'POST', body: JSON.stringify({ url }) });
-    toast('Launched in MPV');
-  } catch (e) { toast(e.message, 4000); }
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function tryOpenMpvProtocol(absUrl) {
+  const attempts = [`mpv://${absUrl}`, `mpv://${encodeURI(absUrl)}`];
+  for (const href of attempts) {
+    try {
+      const a = document.createElement('a');
+      a.href = href;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
+async function openInMpv() {
+  let absUrl = '';
+  let title = currentMedia?.title;
+
+  if (currentMedia?.play_url) {
+    absUrl = toAbsoluteUrl(currentMedia.play_url);
+  } else {
+    const source = urlInput.value.trim() || currentMedia?.source_url;
+    if (!source) {
+      toast('Load a video first, then click MPV');
+      return;
+    }
+    const q = appStatus?.mpv_server ? '?server=true' : '';
+    const res = await api(`/api/mpv${q}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        url: source,
+        format_id: qualitySelect.value || null,
+      }),
+    });
+    if (res.mode === 'server') {
+      toast('Launched in MPV on this machine');
+      return;
+    }
+    absUrl = res.play_url;
+    title = res.title || title;
+  }
+
+  if (!absUrl) {
+    toast('No stream URL available for MPV');
+    return;
+  }
+
+  tryOpenMpvProtocol(absUrl);
+  const copied = await copyText(absUrl);
+
+  toast(
+    copied
+      ? `Stream URL copied — paste in MPV with Ctrl+O (Open URL).${title ? ' ' + title : ''} Run "mpv --register-protocol-handler" once for one-click open.`
+      : 'Open MPV → File → Open URL (Ctrl+O) and paste the stream link',
+    9000,
+  );
+}
+
+$('#mpv-btn').addEventListener('click', async () => {
+  try {
+    await openInMpv();
+  } catch (e) {
+    toast(e.message, 6000);
+  }
 });
 
 $('#download-btn').addEventListener('click', async () => {

@@ -186,12 +186,14 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.2.2',
+        'version': '2.2.3',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
         'port': int(os.environ.get('PORT', 8899)),
-        'mpv_available': bool(find_mpv()),
+        'mpv_available': True,
+        'mpv_server': bool(find_mpv()),
+        'mpv_client': True,
         'ffmpeg_available': bool(_ffmpeg_path()),
         'queue_length': len(queue),
         'anti_bot': HAS_CURL_CFFI,
@@ -535,13 +537,41 @@ def api_library():
     return files
 
 
+def _absolute_url(request: Request, path: str) -> str:
+    if not path:
+        return path
+    if path.startswith('http://') or path.startswith('https://'):
+        return path
+    base = str(request.base_url).rstrip('/')
+    if not path.startswith('/'):
+        path = '/' + path
+    return base + path
+
+
 @app.post('/api/mpv')
-def api_mpv(req: PlayRequest):
+def api_mpv(req: PlayRequest, request: Request, server: bool = False):
     try:
         info = resolve_url(req.url, req.format_id)
-        url = info.get('stream_url') or req.url
-        mpv_path = launch_mpv(url, info.get('title'), info.get('headers'))
-        return {'ok': True, 'mpv': mpv_path}
+        play = _make_play_response(info, req.url)
+        play_url = _absolute_url(request, play['play_url'])
+        title = play.get('title') or req.title
+
+        if server and find_mpv():
+            port = int(os.environ.get('PORT', 8899))
+            local_url = play['play_url']
+            if local_url.startswith('/'):
+                local_url = f'http://127.0.0.1:{port}{local_url}'
+            launch_mpv(local_url, title, info.get('headers'))
+            return {'ok': True, 'mode': 'server', 'play_url': play_url, 'title': title}
+
+        return {
+            'ok': True,
+            'mode': 'client',
+            'play_url': play_url,
+            'title': title,
+            'mpv_protocol': f'mpv://{play_url}',
+            'command': f'mpv "{play_url}"',
+        }
     except Exception as e:
         raise HTTPException(400, str(e))
 
