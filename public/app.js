@@ -66,6 +66,7 @@ let abStep = 0;
 let audioCtx = null;
 let gainNode = null;
 let audioBoostReady = false;
+let wantsPlayback = false;
 
 function stringifyApiDetail(detail) {
   if (detail == null) return '';
@@ -191,15 +192,63 @@ function setupAudioBoost() {
   } catch (_) {}
 }
 
+function primePlaybackGesture() {
+  wantsPlayback = true;
+  if (audioCtx?.state === 'suspended') audioCtx.resume().catch(() => {});
+}
+
+function showPlayPrompt(label = 'Tap to play') {
+  const el = $('#play-prompt');
+  const text = el?.querySelector('.play-prompt-text');
+  if (text) text.textContent = label;
+  if (el) el.hidden = false;
+}
+
+function hidePlayPrompt() {
+  const el = $('#play-prompt');
+  if (el) el.hidden = true;
+}
+
+function tryPlayFromGesture() {
+  primePlaybackGesture();
+  if (audioCtx?.state === 'suspended') audioCtx.resume().catch(() => {});
+  return video.play()
+    .then(() => {
+      hidePlayPrompt();
+      setPlayPauseIcon(true);
+      wantsPlayback = false;
+      return true;
+    })
+    .catch(() => {
+      showPlayPrompt();
+      setPlayPauseIcon(false);
+      return false;
+    });
+}
+
 async function tryPlay() {
   if (audioCtx?.state === 'suspended') {
     await audioCtx.resume().catch(() => {});
   }
   try {
     await video.play();
+    hidePlayPrompt();
+    wantsPlayback = false;
     return true;
-  } catch (err) {
-    toast('Playback blocked — tap the video or play button', 5000);
+  } catch (_) {
+    if (!video.muted) {
+      try {
+        video.muted = true;
+        await video.play();
+        hidePlayPrompt();
+        setPlayPauseIcon(true);
+        toast('Playing muted — adjust volume to unmute', 3500);
+        return true;
+      } catch (_) {
+        video.muted = false;
+      }
+    }
+    showPlayPrompt(wantsPlayback ? 'Tap to play' : 'Tap to play');
     setPlayPauseIcon(false);
     return false;
   }
@@ -1495,7 +1544,14 @@ progressHitarea.addEventListener('touchend', (e) => {
 }, { passive: false });
 
 /* ── Controls ── */
-$('#play-btn').addEventListener('click', () => playUrl(urlInput.value.trim()));
+$('#play-btn').addEventListener('click', () => {
+  primePlaybackGesture();
+  playUrl(urlInput.value.trim());
+});
+$('#play-prompt')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  tryPlayFromGesture().then((ok) => { if (ok) wsSend({ cmd: 'play' }); });
+});
 $('#focus-btn')?.addEventListener('click', toggleVideoFocus);
 $('#focus-exit-btn')?.addEventListener('click', toggleVideoFocus);
 $('#torrent-add-btn').addEventListener('click', () => {
@@ -1920,10 +1976,9 @@ $('#meta-fav-btn')?.addEventListener('click', () => addToFavorites());
 $('#meta-playlist-btn')?.addEventListener('click', () => showAddToPlaylistDialog());
 $('#meta-mpv-btn')?.addEventListener('click', () => openInMpv().catch((e) => toast(e.message, 6000)));
 
-$('#toggle-btn').addEventListener('click', async () => {
+$('#toggle-btn').addEventListener('click', () => {
   if (video.paused) {
-    const ok = await tryPlay();
-    if (ok) wsSend({ cmd: 'play' });
+    tryPlayFromGesture().then((ok) => { if (ok) wsSend({ cmd: 'play' }); });
   } else {
     video.pause();
     wsSend({ cmd: 'pause' });
@@ -1958,8 +2013,12 @@ $('#ab-btn').addEventListener('click', toggleAbLoop);
 $('#screenshot-btn').addEventListener('click', takeScreenshot);
 $('#refresh-library-btn')?.addEventListener('click', refreshLibrary);
 
-video.addEventListener('play', () => setPlayPauseIcon(true));
+video.addEventListener('play', () => {
+  hidePlayPrompt();
+  setPlayPauseIcon(true);
+});
 video.addEventListener('pause', () => setPlayPauseIcon(false));
+
 video.addEventListener('timeupdate', () => { updateProgress(); scheduleProgressSave(); });
 video.addEventListener('ended', () => {
   if (loopVideo) return;
@@ -1967,18 +2026,14 @@ video.addEventListener('ended', () => {
   playNext();
 });
 
-let videoClickTimer = null;
 video.addEventListener('click', () => {
-  clearTimeout(videoClickTimer);
-  videoClickTimer = setTimeout(async () => {
-    if (video.paused) await tryPlay();
-    else video.pause();
-  }, 280);
+  if ($('#play-prompt')?.hidden === false) return;
+  if (video.paused) tryPlayFromGesture();
+  else video.pause();
 });
 
 video.addEventListener('dblclick', (e) => {
   e.preventDefault();
-  clearTimeout(videoClickTimer);
   toggleFullscreen();
 });
 
@@ -1991,7 +2046,10 @@ video.addEventListener('error', () => {
 video.addEventListener('progress', () => updateBufferBar());
 
 video.addEventListener('waiting', () => { nowPlaying.textContent = (currentMedia?.title || 'Buffering') + '…'; });
-video.addEventListener('playing', () => { nowPlaying.textContent = currentMedia?.title || 'Playing'; });
+video.addEventListener('playing', () => {
+  hidePlayPrompt();
+  nowPlaying.textContent = currentMedia?.title || 'Playing';
+});
 
 $('#mute-btn').addEventListener('click', () => {
   video.muted = !video.muted;

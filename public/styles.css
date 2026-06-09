@@ -305,6 +305,41 @@ button, input, select, textarea {
 
 .player-overlay.hidden { opacity: 0; }
 
+.play-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  border: none;
+  background: rgba(0, 0, 0, 0.42);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.play-prompt:hover { background: rgba(0, 0, 0, 0.52); }
+
+.play-prompt-icon {
+  width: 76px;
+  height: 76px;
+  padding: 1.1rem;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.88);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.play-prompt-text {
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+}
+
 .drop-zone {
   pointer-events: all;
   text-align: center;
