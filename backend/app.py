@@ -30,7 +30,7 @@ from resolver import (
 )
 from streams import create_token, get_token
 from torrent import HAS_LIBTORRENT, get_manager, is_magnet, is_torrent_bytes, normalize_url, parse_range_header
-from pikpak import HAS_PIKPAK, configure as pikpak_configure, get_fresh_stream, get_status as pikpak_status, is_configured as pikpak_ready, list_tasks as pikpak_list_tasks, resolve_via_pikpak, set_enabled as pikpak_set_enabled, test_login as pikpak_test_login, torrent_bytes_to_magnet
+from alldebrid import get_status as alldebrid_status, is_configured as alldebrid_ready, list_tasks as alldebrid_list_tasks, resolve_magnet as resolve_via_alldebrid, resolve_torrent_bytes as resolve_torrent_via_alldebrid
 
 ROOT = Path(__file__).parent.parent
 PUBLIC = ROOT / 'public'
@@ -178,9 +178,7 @@ def _raise_resolve_http(exc: Exception):
 
 
 def _make_play_response(info: dict, source_url: str):
-    if info.get('pikpak_file_id'):
-        play_url = f'/api/pikpak/stream/{info["pikpak_file_id"]}'
-    elif info.get('play_url'):
+    if info.get('play_url'):
         play_url = info['play_url']
     elif info.get('stream_url', '').startswith('/api/'):
         play_url = info['stream_url']
@@ -238,10 +236,10 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.5.8',
+        'version': '2.6.0',
         'cookies_file': bool(__import__('resolver')._cookies_file_path()),
         'torrent_available': HAS_LIBTORRENT,
-        'pikpak': pikpak_status(),
+        'alldebrid': alldebrid_status(),
         'lan_ip': _lan_ip(),
         'port': int(os.environ.get('PORT', 8899)),
         'mpv_available': True,
@@ -764,16 +762,6 @@ def api_mpv(req: PlayRequest, request: Request, server: bool = False):
         raise HTTPException(400, str(e))
 
 
-class PikPakConfigRequest(BaseModel):
-    username: str
-    password: str
-    enabled: bool = True
-
-
-class PikPakEnableRequest(BaseModel):
-    enabled: bool
-
-
 class TorrentAddRequest(BaseModel):
     magnet: Optional[str] = None
 
@@ -787,133 +775,19 @@ class TorrentPriorityRequest(BaseModel):
     priority: int = 7
 
 
-@app.get('/api/pikpak/status')
-def api_pikpak_status():
-    return pikpak_status()
+@app.get('/api/alldebrid/status')
+def api_alldebrid_status():
+    return alldebrid_status()
 
 
-@app.post('/api/pikpak/configure')
-def api_pikpak_configure(req: PikPakConfigRequest):
-    if not HAS_PIKPAK:
-        raise HTTPException(400, 'pikpakapi not installed')
-    try:
-        pikpak_test_login(req.username, req.password)
-        pikpak_configure(req.username, req.password, req.enabled)
-        return {'ok': True, **pikpak_status()}
-    except Exception as e:
-        raise HTTPException(400, f'PikPak login failed: {e}')
-
-
-@app.post('/api/pikpak/enable')
-def api_pikpak_enable(req: PikPakEnableRequest):
-    pikpak_set_enabled(req.enabled)
-    return {'ok': True, **pikpak_status()}
-
-
-@app.get('/api/pikpak/stream/{file_id}')
-@app.head('/api/pikpak/stream/{file_id}')
-async def api_pikpak_stream(file_id: str, request: Request):
-    if not pikpak_ready():
-        raise HTTPException(400, 'PikPak not configured')
-
-    refresh = request.query_params.get('refresh') == '1'
-    try:
-        entry = get_fresh_stream(file_id, refresh=refresh)
-    except Exception as e:
-        raise HTTPException(502, f'PikPak stream: {e}')
-
-    headers = dict(entry.get('headers') or {})
-    range_header = request.headers.get('range')
-    if range_header:
-        headers['Range'] = range_header
-
-    client = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(120.0, read=120.0))
-
-    async def proxy_upstream(stream_info: dict, retry: bool = True):
-        upstream = await client.send(
-            client.build_request('GET', stream_info['stream_url'], headers=headers),
-            stream=True,
-        )
-        if upstream.status_code in (401, 403, 404) and retry:
-            await upstream.aclose()
-            stream_info = get_fresh_stream(file_id, refresh=True)
-            return await proxy_upstream(stream_info, retry=False)
-        return upstream, stream_info
-
-    try:
-        upstream, entry = await proxy_upstream(entry)
-
-        out_headers = {
-            'Accept-Ranges': 'bytes',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges, Content-Type',
-        }
-        for key in ('content-type', 'content-length', 'content-range'):
-            if key in upstream.headers:
-                out_headers[key] = upstream.headers[key]
-
-        media_type = upstream.headers.get('content-type') or entry.get('content_type') or 'video/mp4'
-        base_mime = media_type.split(';')[0].strip().lower()
-        if base_mime in {'binary/octet-stream', 'application/octet-stream', 'application/json', 'text/plain'}:
-            media_type = entry.get('content_type') or 'video/mp4'
-            out_headers['content-type'] = media_type
-
-        if upstream.status_code >= 400:
-            body = await upstream.aread()
-            await upstream.aclose()
-            await client.aclose()
-            snippet = body[:200].decode('utf-8', errors='replace')
-            raise HTTPException(upstream.status_code, f'PikPak CDN error: {snippet}')
-
-        if not range_header:
-            content_length = upstream.headers.get('content-length')
-            try:
-                if content_length and int(content_length) < 4096:
-                    body = await upstream.aread()
-                    await upstream.aclose()
-                    await client.aclose()
-                    snippet = body[:200].decode('utf-8', errors='replace')
-                    raise HTTPException(502, f'PikPak returned invalid stream ({content_length} bytes): {snippet}')
-            except ValueError:
-                pass
-
-        if request.method == 'HEAD':
-            await upstream.aclose()
-            await client.aclose()
-            from starlette.responses import Response
-            return Response(status_code=upstream.status_code, headers=out_headers)
-
-        async def stream():
-            try:
-                async for chunk in upstream.aiter_bytes(65536):
-                    yield chunk
-            finally:
-                await upstream.aclose()
-                await client.aclose()
-
-        return StreamingResponse(
-            stream(),
-            status_code=upstream.status_code,
-            media_type=media_type,
-            headers=out_headers,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        await client.aclose()
-        raise HTTPException(502, f'PikPak stream error: {exc}')
-
-
-@app.get('/api/pikpak/tasks')
-def api_pikpak_tasks(limit: int = 50):
-    if not HAS_PIKPAK:
-        return []
-    if not pikpak_ready():
+@app.get('/api/alldebrid/tasks')
+def api_alldebrid_tasks(limit: int = 50):
+    if not alldebrid_ready():
         return []
     try:
-        return pikpak_list_tasks(limit=min(limit, 100))
+        return alldebrid_list_tasks(limit=min(limit, 100))
     except Exception as e:
-        raise HTTPException(400, f'PikPak tasks: {e}')
+        raise HTTPException(400, f'AllDebrid tasks: {e}')
 
 
 @app.get('/api/torrent')
@@ -929,32 +803,41 @@ async def api_torrent_add(magnet: Optional[str] = Form(None), file: UploadFile =
         magnet = normalize_url(magnet)
 
     if magnet and is_magnet(magnet):
-        if pikpak_ready() and HAS_PIKPAK:
+        if alldebrid_ready():
             try:
-                info = resolve_via_pikpak(magnet, 'Magnet link')
+                info = resolve_via_alldebrid(magnet, 'Magnet link')
                 play = _make_play_response(info, magnet)
-                return {'type': 'pikpak', 'pikpak': True, 'files': [], **play}
+                return {'type': 'alldebrid', 'alldebrid': True, 'files': [], **play}
             except Exception as e:
                 if not HAS_LIBTORRENT:
-                    raise HTTPException(400, f'PikPak failed: {e}')
+                    raise HTTPException(400, f'AllDebrid failed: {e}')
         if not HAS_LIBTORRENT:
-            raise HTTPException(400, 'Torrent support requires PikPak login or libtorrent')
+            raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
         mgr = get_manager()
         tid = mgr.add_magnet(magnet)
         mgr.wait_metadata(tid)
         return {'id': tid, **mgr.status(tid), 'files': mgr.list_files(tid)}
 
-    if not HAS_LIBTORRENT:
-        raise HTTPException(400, 'Torrent support requires PikPak login or libtorrent')
-
-    mgr = get_manager()
-
     if file and file.filename:
         data = await file.read()
         if is_torrent_bytes(data) or (file.filename or '').lower().endswith('.torrent'):
+            if alldebrid_ready():
+                try:
+                    info = resolve_torrent_via_alldebrid(data, file.filename)
+                    play = _make_play_response(info, info.get('url') or file.filename)
+                    return {'type': 'alldebrid', 'alldebrid': True, 'filename': file.filename, 'files': [], **play}
+                except Exception as e:
+                    if not HAS_LIBTORRENT:
+                        raise HTTPException(400, f'AllDebrid failed: {e}')
+            if not HAS_LIBTORRENT:
+                raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
+            mgr = get_manager()
             tid = mgr.add_torrent_data(data, file.filename)
             mgr.wait_metadata(tid)
             return {'id': tid, **mgr.status(tid), 'files': mgr.list_files(tid)}
+
+    if not HAS_LIBTORRENT:
+        raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
 
     raise HTTPException(400, 'Provide a magnet link or .torrent file')
 
@@ -1108,15 +991,14 @@ async def upload_file(file: UploadFile = File(...)):
     filename = file.filename or 'upload'
 
     if filename.lower().endswith('.torrent') or is_torrent_bytes(raw):
-        if pikpak_ready() and HAS_PIKPAK:
+        if alldebrid_ready():
             try:
-                magnet = torrent_bytes_to_magnet(raw)
-                info = resolve_via_pikpak(magnet, filename)
-                play = _make_play_response(info, magnet)
-                return {'type': 'pikpak', 'filename': filename, **play}
+                info = resolve_torrent_via_alldebrid(raw, filename)
+                play = _make_play_response(info, info.get('url') or filename)
+                return {'type': 'alldebrid', 'filename': filename, **play}
             except Exception as e:
                 if not HAS_LIBTORRENT:
-                    raise HTTPException(400, f'PikPak failed: {e}')
+                    raise HTTPException(400, f'AllDebrid failed: {e}')
         if HAS_LIBTORRENT:
             mgr = get_manager()
             info = mgr.resolve_torrent_file(raw, filename)
@@ -1129,7 +1011,7 @@ async def upload_file(file: UploadFile = File(...)):
                 'files': mgr.list_files(info['torrent_id']),
                 **info,
             }
-        raise HTTPException(400, 'Torrent support requires libtorrent or PikPak login')
+        raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
 
     ext = Path(filename).suffix or '.mp4'
     fid = uuid.uuid4().hex

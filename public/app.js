@@ -585,15 +585,15 @@ function loadSource(url, type = 'progressive') {
   }
 }
 
-function isPikpakMedia(info) {
+function isAlldebridMedia(info) {
   if (!info) return false;
-  return info.site === 'pikpak'
-    || info.resolved_with === 'pikpak-cloud'
-    || info.pikpak_task_id
-    || (info.source_url && isMagnet(info.source_url) && appStatus?.pikpak?.configured);
+  return info.site === 'alldebrid'
+    || info.resolved_with === 'alldebrid-cloud'
+    || info.alldebrid_magnet_id
+    || (info.source_url && isMagnet(info.source_url) && appStatus?.alldebrid?.configured);
 }
 
-function formatPikpakPhase(phase) {
+function formatAlldebridPhase(phase) {
   const labels = {
     running: 'Downloading to cloud',
     pending: 'Queued',
@@ -603,15 +603,15 @@ function formatPikpakPhase(phase) {
   return labels[phase] || phase || 'Cloud';
 }
 
-function findMatchingPikpakTask(tasks, info) {
+function findMatchingAlldebridTask(tasks, info) {
   if (!tasks?.length || !info) return null;
-  if (info.pikpak_task_id) {
-    const byTask = tasks.find((t) => t.task_id === info.pikpak_task_id || t.id === info.pikpak_task_id);
-    if (byTask) return byTask;
+  if (info.alldebrid_magnet_id) {
+    const byMagnet = tasks.find((t) => t.magnet_id === info.alldebrid_magnet_id || t.id === info.alldebrid_magnet_id);
+    if (byMagnet) return byMagnet;
   }
-  if (info.pikpak_file_id) {
-    const byFile = tasks.find((t) => t.file_id === info.pikpak_file_id);
-    if (byFile) return byFile;
+  if (info.task_id) {
+    const byTask = tasks.find((t) => t.task_id === info.task_id || t.id === info.task_id);
+    if (byTask) return byTask;
   }
   if (info.source_url) {
     const src = info.source_url.trim();
@@ -634,8 +634,8 @@ function renderCloudStatus(task) {
   cloudStatus.classList.remove('hidden', 'complete', 'error', 'running');
   cloudStatus.classList.add(task.phase || 'running');
   const parts = [
-    'PikPak cloud',
-    formatPikpakPhase(task.phase),
+    'AllDebrid',
+    formatAlldebridPhase(task.phase),
     `${task.progress || 0}%`,
   ];
   if (task.file_size) parts.push(fmtSize(task.file_size));
@@ -647,13 +647,13 @@ function renderCloudStatus(task) {
 }
 
 async function updateCloudStatus() {
-  if (!appStatus?.pikpak?.configured || !isPikpakMedia(currentMedia)) {
+  if (!appStatus?.alldebrid?.configured || !isAlldebridMedia(currentMedia)) {
     cloudStatus.classList.add('hidden');
     return;
   }
   try {
-    const tasks = await api('/api/pikpak/tasks');
-    renderCloudStatus(findMatchingPikpakTask(tasks, currentMedia) || tasks[0]);
+    const tasks = await api('/api/alldebrid/tasks');
+    renderCloudStatus(findMatchingAlldebridTask(tasks, currentMedia) || tasks[0]);
   } catch (_) {
     cloudStatus.classList.add('hidden');
   }
@@ -669,7 +669,7 @@ function setMeta(info) {
   metaDetails.textContent = parts.join(' · ') || '';
   metaThumb.style.backgroundImage = info.thumbnail ? `url(${info.thumbnail})` : '';
   nowPlaying.textContent = info.title || 'Playing';
-  if (isPikpakMedia(info)) updateCloudStatus();
+  if (isAlldebridMedia(info)) updateCloudStatus();
   else cloudStatus.classList.add('hidden');
   refreshFavoriteState();
 }
@@ -882,8 +882,8 @@ async function playResolved(info) {
   recordPlayback(info);
   toast('Playing: ' + (info.title || 'media'));
   wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
-  if (isPikpakMedia(info)) updateCloudStatus();
-  cloudPollActive = isPikpakMedia(info);
+  if (isAlldebridMedia(info)) updateCloudStatus();
+  cloudPollActive = isAlldebridMedia(info);
 }
 
 async function playTorrent(tid, fileIndex = null) {
@@ -910,9 +910,9 @@ async function addMagnet(magnet, autoplay = true) {
   await refreshTorrents();
   toast('Torrent added: ' + (res.name || 'magnet'));
   if (autoplay) {
-    if ((res.type === 'pikpak' || res.pikpak) && res.play_url) {
+    if ((res.type === 'alldebrid' || res.alldebrid) && res.play_url) {
       await playResolved(res);
-    } else if (res.type === 'pikpak' || res.pikpak) {
+    } else if (res.type === 'alldebrid' || res.alldebrid) {
       await playUrl(magnet);
     } else {
       const videoFile = (res.files || []).find((f) => f.is_video);
@@ -964,18 +964,18 @@ function renderLocalTorrentCard(t) {
   loadTorrentFiles(t.id, card.querySelector(`[data-files="${t.id}"]`));
 }
 
-function renderPikpakTaskCard(t) {
+function renderAlldebridTaskCard(t) {
   const card = document.createElement('li');
   card.className = 'torrent-card cloud';
-  const phase = formatPikpakPhase(t.phase || t.state);
+  const phase = formatAlldebridPhase(t.phase || t.state);
   const size = t.file_size ? fmtSize(t.file_size) : '';
   const speed = t.download_rate ? `↓ ${fmtSpeed(t.download_rate)}` : '';
   const canPlay = t.phase === 'complete' && t.source;
   card.innerHTML = `
     <div class="torrent-card-header">
       <div>
-        <div class="torrent-name">${esc(t.name || 'PikPak download')}</div>
-        <div class="torrent-meta">PikPak cloud · ${esc(phase)} · ${t.progress || 0}%${size ? ` · ${size}` : ''}${speed ? ` · ${speed}` : ''}</div>
+        <div class="torrent-name">${esc(t.name || 'AllDebrid download')}</div>
+        <div class="torrent-meta">AllDebrid · ${esc(phase)} · ${t.progress || 0}%${size ? ` · ${size}` : ''}${speed ? ` · ${speed}` : ''}</div>
       </div>
       <div class="torrent-actions">
         ${canPlay ? '<button type="button" data-act="play" title="Play from cloud">▶</button>' : ''}
@@ -998,17 +998,17 @@ function renderPikpakTaskCard(t) {
 
 async function refreshTorrents() {
   const localAvailable = appStatus?.torrent_available;
-  const pikpakAvailable = appStatus?.pikpak?.configured;
+  const alldebridAvailable = appStatus?.alldebrid?.configured;
   torrentList.innerHTML = '';
 
-  if (!localAvailable && !pikpakAvailable) {
-    torrentList.innerHTML = '<li class="item"><div class="item-sub">Configure PikPak or enable local libtorrent to manage torrents</div></li>';
+  if (!localAvailable && !alldebridAvailable) {
+    torrentList.innerHTML = '<li class="item"><div class="item-sub">AllDebrid is unavailable and local libtorrent is not enabled</div></li>';
     return;
   }
 
   const [localItems, cloudItems] = await Promise.all([
     localAvailable ? api('/api/torrent').catch(() => []) : Promise.resolve([]),
-    pikpakAvailable ? api('/api/pikpak/tasks').catch(() => []) : Promise.resolve([]),
+    alldebridAvailable ? api('/api/alldebrid/tasks').catch(() => []) : Promise.resolve([]),
   ]);
 
   if (!localItems.length && !cloudItems.length) {
@@ -1016,7 +1016,7 @@ async function refreshTorrents() {
     return;
   }
 
-  cloudItems.forEach(renderPikpakTaskCard);
+  cloudItems.forEach(renderAlldebridTaskCard);
   localItems.forEach(renderLocalTorrentCard);
 }
 
@@ -1040,27 +1040,27 @@ async function loadTorrentFiles(tid, container) {
   }
 }
 
-async function initPikpak() {
+async function initAlldebrid() {
   try {
-    const st = appStatus?.pikpak || await api('/api/pikpak/status');
-    const el = $('#pikpak-status');
-    if (st.username) $('#pikpak-user').value = st.username;
-    $('#pikpak-enabled').checked = st.enabled !== false;
+    const st = appStatus?.alldebrid || await api('/api/alldebrid/status');
+    const el = $('#alldebrid-status');
+    if (!el) return;
     if (st.configured) {
-      el.textContent = `Logged in as ${st.username} — torrents use PikPak cloud`;
+      const premium = st.is_premium ? 'premium' : 'free';
+      el.textContent = `Connected as ${st.username || 'AllDebrid'} (${premium}) — magnets use cloud`;
       el.classList.add('ok');
-    } else if (st.available) {
-      el.textContent = 'Enter PikPak email & password to stream via cloud';
+    } else if (st.error) {
+      el.textContent = `AllDebrid error: ${st.error}`;
     } else {
-      el.textContent = 'PikPak module not installed on server';
+      el.textContent = 'AllDebrid not configured';
     }
   } catch (_) {}
 }
 
 function shouldPollCloudStatus() {
-  return appStatus?.pikpak?.configured && (
+  return appStatus?.alldebrid?.configured && (
     cloudPollActive
-    || isPikpakMedia(currentMedia)
+    || isAlldebridMedia(currentMedia)
   );
 }
 
@@ -1209,7 +1209,7 @@ function applyPlayback(info, resumePos = 0) {
   recordPlayback(info);
   toast('Playing: ' + (info.title || 'media'));
   wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
-  if (isPikpakMedia(info)) updateCloudStatus();
+  if (isAlldebridMedia(info)) updateCloudStatus();
 }
 
 async function playViaLocalBridge(url, formatId = null, resumePos = 0) {
@@ -1260,9 +1260,9 @@ async function playViaLocalBridge(url, formatId = null, resumePos = 0) {
 
 async function playUrl(url, formatId = null, resumePos = 0) {
   if (!url) return;
-  const pikpakMagnet = isMagnet(url) && appStatus?.pikpak?.configured;
-  if (pikpakMagnet) {
-    toast('Sending to PikPak cloud...', 8000);
+  const alldebridMagnet = isMagnet(url) && appStatus?.alldebrid?.configured;
+  if (alldebridMagnet) {
+    toast('Sending to AllDebrid cloud...', 8000);
     cloudPollActive = true;
     updateCloudStatus();
   } else if (isMagnet(url)) {
@@ -1317,7 +1317,7 @@ async function playUrl(url, formatId = null, resumePos = 0) {
     }
     handlePlaybackError('Could not play link', e);
   } finally {
-    cloudPollActive = isPikpakMedia(currentMedia);
+    cloudPollActive = isAlldebridMedia(currentMedia);
   }
 }
 
@@ -1487,12 +1487,12 @@ async function initStatus() {
   mpvBtn.title = st.mpv_server
     ? 'Open in MPV (server or local)'
     : 'Open in local MPV on your PC';
-  if (!st.torrent_available && !st.pikpak?.configured) {
+  if (!st.torrent_available && !st.alldebrid?.configured) {
     $('#torrent-add-btn').style.opacity = '0.4';
   } else {
     $('#torrent-add-btn').style.opacity = '1';
   }
-  await initPikpak();
+  await initAlldebrid();
   initMpvSettings();
   await syncLibrary();
   startTorrentPolling();
@@ -1640,26 +1640,6 @@ $('#torrent-file-input').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 $('#refresh-torrents-btn').addEventListener('click', refreshTorrents);
-$('#pikpak-save-btn').addEventListener('click', async () => {
-  const username = $('#pikpak-user').value.trim();
-  const password = $('#pikpak-pass').value;
-  const enabled = $('#pikpak-enabled').checked;
-  if (!username || !password) { toast('Enter PikPak email and password'); return; }
-  try {
-    await api('/api/pikpak/configure', { method: 'POST', body: JSON.stringify({ username, password, enabled }) });
-    appStatus = await api('/api/status');
-    await initPikpak();
-    toast('PikPak connected — magnets will use your account');
-    $('#pikpak-pass').value = '';
-  } catch (e) { toast(e.message, 6000); }
-});
-$('#pikpak-enabled').addEventListener('change', async () => {
-  try {
-    await api('/api/pikpak/enable', { method: 'POST', body: JSON.stringify({ enabled: $('#pikpak-enabled').checked }) });
-    appStatus = await api('/api/status');
-    await initPikpak();
-  } catch (e) { toast(e.message); }
-});
 $('#resolve-btn').addEventListener('click', async () => {
   const url = urlInput.value.trim();
   if (!url) return;
@@ -2282,7 +2262,7 @@ $$('.tab').forEach((tab) => {
     $$('.tab').forEach((t) => t.classList.toggle('active', t === tab));
     $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${tab.dataset.tab}`));
     if (tab.dataset.tab === 'library') refreshLibrary();
-    if (tab.dataset.tab === 'torrents') { refreshTorrents(); initPikpak(); initMpvSettings(); refreshMpvBridgeStatus(); }
+    if (tab.dataset.tab === 'torrents') { refreshTorrents(); initAlldebrid(); initMpvSettings(); refreshMpvBridgeStatus(); }
   });
 });
 
@@ -2322,7 +2302,7 @@ document.addEventListener('drop', async (e) => {
         const m = res.play_url.match(/\/api\/torrent\/([^/]+)\/stream\/(\d+)/);
         if (m) await playTorrent(m[1], parseInt(m[2], 10));
         else if (res.torrent_id) await playTorrent(res.torrent_id);
-      } else if (res.stream_url || res.type === 'pikpak') {
+      } else if (res.stream_url || res.type === 'alldebrid') {
         await playUrl(res.url || res.source_url || urlInput.value);
       } else {
         playLocal(res.play_url, res.title);

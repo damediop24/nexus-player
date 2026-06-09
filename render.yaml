@@ -13,3 +13,5 @@ services:
         value: 10000
       - key: DATABASE_PATH
         value: /data/nexus.db
+      - key: ALLDEBRID_API_KEY
+        value: fFr0hkBueEl7XwmM9OjI

@@ -1187,16 +1187,16 @@ def _cdn_download_fallback(url):
 def _resolve_magnet(url, format_id=None):
     from torrent import HAS_LIBTORRENT, get_manager
 
-    pikpak_error = None
+    alldebrid_error = None
     try:
-        from pikpak import is_configured as pikpak_ready, resolve_via_pikpak
-        if pikpak_ready():
+        from alldebrid import is_configured as alldebrid_ready, resolve_magnet as resolve_via_alldebrid
+        if alldebrid_ready():
             try:
-                return resolve_via_pikpak(url, 'Magnet link')
+                return resolve_via_alldebrid(url, 'Magnet link')
             except Exception as exc:
-                pikpak_error = str(exc)
+                alldebrid_error = str(exc)
     except Exception as exc:
-        pikpak_error = str(exc)
+        alldebrid_error = str(exc)
 
     if HAS_LIBTORRENT:
         try:
@@ -1204,20 +1204,15 @@ def _resolve_magnet(url, format_id=None):
             idx = int(format_id) if format_id is not None and str(format_id).isdigit() else None
             return mgr.resolve_for_play(url, idx)
         except Exception as exc:
-            if pikpak_error:
+            if alldebrid_error:
                 raise RuntimeError(
-                    f'PikPak failed: {pikpak_error}. Local torrent failed: {exc}'
+                    f'AllDebrid failed: {alldebrid_error}. Local torrent failed: {exc}'
                 ) from exc
             raise
 
-    if pikpak_error:
-        raise RuntimeError(
-            f'PikPak failed: {pikpak_error}. '
-            'Open the Torrents tab and re-save your PikPak login.'
-        )
-    raise RuntimeError(
-        'Magnet links need PikPak (Torrents tab → Save & Login) or libtorrent installed.'
-    )
+    if alldebrid_error:
+        raise RuntimeError(f'AllDebrid failed: {alldebrid_error}')
+    raise RuntimeError('Magnet links need AllDebrid or libtorrent installed.')
 
 
 def resolve_url(url, format_id=None):
