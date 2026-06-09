@@ -66,21 +66,39 @@ let audioCtx = null;
 let gainNode = null;
 let audioBoostReady = false;
 
-function attachApiError(detail, status) {
-  let message = `Error ${status}`;
+function stringifyApiDetail(detail) {
+  if (detail == null) return '';
+  if (typeof detail === 'string') return detail;
+  if (typeof detail === 'number' || typeof detail === 'boolean') return String(detail);
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => (item && typeof item === 'object' && item.msg ? item.msg : stringifyApiDetail(item)))
+      .filter(Boolean)
+      .join('; ');
+  }
+  if (typeof detail === 'object') {
+    const msg = detail.error ?? detail.message ?? detail.msg ?? detail.detail;
+    if (typeof msg === 'string') return msg;
+    if (msg != null) return stringifyApiDetail(msg);
+    try { return JSON.stringify(detail); } catch (_) { return 'Request failed'; }
+  }
+  return String(detail);
+}
+
+function attachApiError(detail, status = 400) {
+  const message = stringifyApiDetail(detail) || `Error ${status}`;
   const err = new Error(message);
   if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
-    message = detail.error || detail.message || message;
-    err.message = message;
     err.code = detail.code || null;
-    err.hint = detail.hint || null;
+    err.hint = typeof detail.hint === 'string' ? detail.hint : null;
     err.retriable = !!detail.retriable;
     err.site = detail.site || null;
-    return err;
   }
-  if (typeof detail === 'string') err.message = detail;
-  else if (detail) err.message = String(detail);
   return err;
+}
+
+function rejectApiResponse(res, data, fallback = 'Request failed') {
+  return Promise.reject(attachApiError(data?.detail ?? data?.error ?? data ?? fallback, res?.status || 400));
 }
 
 async function api(path, opts = {}) {
@@ -89,13 +107,13 @@ async function api(path, opts = {}) {
     ...opts,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw attachApiError(data.detail, res.status);
+  if (!res.ok) throw attachApiError(data.detail ?? data.error ?? data, res.status);
   return data;
 }
 
 function toast(msg, ms = 2800) {
   const el = $('#toast');
-  el.textContent = msg;
+  el.textContent = typeof msg === 'string' ? msg : stringifyApiDetail(msg);
   el.classList.remove('hidden');
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.add('hidden'), ms);
@@ -480,7 +498,7 @@ function loadSource(url, type = 'progressive') {
         ? 'Network error — stream may have expired. Replay the link or try MPV.'
         : 'Try another quality or open in MPV.';
       handlePlaybackError('HLS stream error', {
-        message: data.details || data.type || 'HLS playback failed',
+        message: stringifyApiDetail(data.details) || stringifyApiDetail(data.type) || 'HLS playback failed',
         hint,
         retriable: true,
       });
@@ -820,7 +838,7 @@ async function addMagnet(magnet, autoplay = true) {
   fd.append('magnet', magnet.trim());
   toast('Adding torrent...', 5000);
   const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
-    if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.detail || 'Add failed')));
+    if (!r.ok) return r.json().then((d) => rejectApiResponse(r, d, 'Add failed'));
     return r.json();
   });
   await refreshTorrents();
@@ -1001,8 +1019,13 @@ function shouldTryLocalBridge(err) {
 }
 
 function formatPlayError(err) {
-  const parts = [err?.message || 'Playback failed'];
-  if (err?.hint) parts.push(err.hint);
+  let message = 'Playback failed';
+  if (typeof err === 'string') message = err;
+  else if (err instanceof Error) message = stringifyApiDetail(err.message) || err.message || message;
+  else if (err?.message != null) message = stringifyApiDetail(err.message) || message;
+  else if (err != null) message = stringifyApiDetail(err) || message;
+  const parts = [message];
+  if (typeof err?.hint === 'string' && err.hint) parts.push(err.hint);
   return parts.join(' — ');
 }
 
@@ -1016,7 +1039,7 @@ async function resolveViaLocalBridge(url) {
   const bridge = `http://127.0.0.1:${MPV_BRIDGE_PORT}/resolve?url=${encodeURIComponent(url)}`;
   const res = await fetch(bridge, { signal: AbortSignal.timeout(30000) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.error) throw new Error(data.error || 'Local resolve failed');
+  if (!res.ok || data.error) throw attachApiError(data.error || data, res.status || 500);
   return data;
 }
 
@@ -1411,7 +1434,7 @@ $('#torrent-file-input').addEventListener('change', async (e) => {
   toast('Adding torrent file...', 5000);
   try {
     const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
-      if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.detail || 'Failed')));
+      if (!r.ok) return r.json().then((d) => rejectApiResponse(r, d, 'Failed'));
       return r.json();
     });
     await refreshTorrents();
@@ -2095,7 +2118,7 @@ document.addEventListener('drop', async (e) => {
       toast('Adding torrent...', 5000);
       try {
         const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
-          if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.detail || 'Failed')));
+          if (!r.ok) return r.json().then((d) => rejectApiResponse(r, d, 'Failed'));
           return r.json();
         });
         await refreshTorrents();
