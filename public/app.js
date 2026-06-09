@@ -1036,28 +1036,75 @@ function handlePlaybackError(context, err) {
   if (nowPlaying) nowPlaying.textContent = 'Playback error';
 }
 
+function isModernBridge(data) {
+  return !!data?.ok && data.resolve === true;
+}
+
 async function isLocalBridgeAvailable() {
   try {
     const res = await fetch(`http://127.0.0.1:${MPV_BRIDGE_PORT}/health`, { signal: AbortSignal.timeout(2000) });
     if (!res.ok) return false;
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) return false;
     const data = await res.json().catch(() => ({}));
-    return !!data.ok;
+    return isModernBridge(data);
   } catch (_) {
     return false;
   }
 }
 
-async function resolveViaLocalBridge(url) {
-  const bridge = `http://127.0.0.1:${MPV_BRIDGE_PORT}/resolve?url=${encodeURIComponent(url)}`;
-  const res = await fetch(bridge, { signal: AbortSignal.timeout(30000) });
-  const data = await res.json().catch(() => ({}));
+async function fetchBridgeResolve(url) {
+  const base = `http://127.0.0.1:${MPV_BRIDGE_PORT}`;
+  const opts = { signal: AbortSignal.timeout(120000) };
+  let res;
+  try {
+    res = await fetch(`${base}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      ...opts,
+    });
+  } catch (_) {
+    res = await fetch(`${base}/resolve?url=${encodeURIComponent(url)}`, opts);
+  }
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    throw attachApiError({
+      error: 'MPV bridge is outdated (port 9340 has an old version)',
+      code: 'bridge_outdated',
+      hint: 'Close old bridge windows, then double-click start-mpv-bridge.vbs from your latest Nexus Player folder.',
+      retriable: true,
+    }, 502);
+  }
+  const data = await res.json().catch(() => null);
+  if (!data) {
+    throw attachApiError({
+      error: 'Local bridge returned an invalid response',
+      code: 'bridge_invalid',
+      hint: 'Restart start-mpv-bridge.vbs from the Nexus Player folder on this PC.',
+      retriable: true,
+    }, 502);
+  }
   if (!res.ok || data.error) throw attachApiError(data.error || data, res.status || 500);
+  if (!isModernBridge(data) && !data.stream_url && !data.streamUrl) {
+    throw attachApiError({
+      error: 'MPV bridge is outdated and cannot resolve links',
+      code: 'bridge_outdated',
+      hint: 'Double-click start-mpv-bridge.vbs from the latest Nexus Player folder (it will replace the old bridge).',
+      retriable: true,
+    }, 502);
+  }
+  return { res, data };
+}
+
+async function resolveViaLocalBridge(url) {
+  const { data } = await fetchBridgeResolve(url);
   const streamUrl = data.stream_url || data.streamUrl;
   if (!streamUrl) {
     throw attachApiError({
       error: 'Local bridge returned no stream URL',
       code: 'bridge_no_stream',
-      hint: 'Restart start-mpv-bridge.vbs and make sure YouTube works in Chrome on this PC.',
+      hint: 'Log into YouTube in Chrome on this PC, restart start-mpv-bridge.vbs, then try again.',
       retriable: true,
     }, 502);
   }
@@ -1148,7 +1195,12 @@ async function playUrl(url, formatId = null, resumePos = 0) {
   } catch (e) {
     if (shouldTryLocalBridge(e)) {
       if (!(await isLocalBridgeAvailable())) {
-        handlePlaybackError('Blocked on cloud server', e);
+        const bridgeHint = 'Double-click start-mpv-bridge.vbs from your latest Nexus Player folder (it replaces any old bridge on port 9340). Log into YouTube in Chrome first.';
+        handlePlaybackError('Blocked on cloud server', {
+          message: stringifyApiDetail(e.message) || 'Cloud resolve failed',
+          hint: e.hint ? `${e.hint} ${bridgeHint}` : bridgeHint,
+          code: e.code,
+        });
         return;
       }
       try {

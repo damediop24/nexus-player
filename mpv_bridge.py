@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PORT = int(os.environ.get('NEXUS_MPV_BRIDGE_PORT', '9340'))
+BRIDGE_VERSION = 2
 DEFAULT_MPV = os.environ.get('MPV_PATH', r'C:\mpv\mpv\mpv.exe')
 PROTOCOL_FLAG = Path.home() / '.nexus-mpv-protocol-registered'
 
@@ -61,6 +62,8 @@ class Handler(BaseHTTPRequestHandler):
             raise RuntimeError('No stream URL found for this page')
         return {
             'ok': True,
+            'resolve': True,
+            'version': BRIDGE_VERSION,
             'source_url': url,
             'stream_url': stream_url,
             'title': result.get('title'),
@@ -75,10 +78,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == '/health':
-            self._json({'ok': True, 'port': PORT, 'mpv': DEFAULT_MPV, 'resolve': True})
+        if parsed.path in ('/health', '/health/'):
+            self._json({
+                'ok': True,
+                'resolve': True,
+                'version': BRIDGE_VERSION,
+                'port': PORT,
+                'mpv': DEFAULT_MPV,
+            })
             return
-        if parsed.path == '/resolve':
+        if parsed.path in ('/resolve', '/resolve/'):
             params = urllib.parse.parse_qs(parsed.query)
             url = (params.get('url') or [''])[0]
             if not url:
