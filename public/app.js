@@ -982,6 +982,7 @@ $('#resolve-btn').addEventListener('click', async () => {
 });
 
 const DEFAULT_MPV_PATH = 'C:\\mpv\\mpv\\mpv.exe';
+const MPV_BRIDGE_PORT = '9340';
 
 function getMpvPath() {
   return localStorage.getItem('nexus-mpv-path') || DEFAULT_MPV_PATH;
@@ -995,39 +996,28 @@ function initMpvSettings() {
   const input = $('#mpv-path');
   if (!input) return;
   input.value = getMpvPath();
+  refreshMpvBridgeStatus();
 }
 
-function downloadTextFile(filename, content, mime = 'application/octet-stream') {
-  const blob = new Blob([content], { type: mime });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function downloadMpvLauncher(absUrl) {
-  const mpvPath = getMpvPath().replace(/"/g, '""');
-  const safeUrl = absUrl.replace(/"/g, '""');
-  const bat = [
-    '@echo off',
-    `start "" "${mpvPath}" --force-window=immediate "${safeUrl}"`,
-    '',
-  ].join('\r\n');
-  downloadTextFile('play-in-mpv.bat', bat);
-}
-
-function downloadMpvRegisterBat() {
-  const mpvPath = getMpvPath().replace(/"/g, '""');
-  const bat = [
-    '@echo off',
-    'echo Registering mpv:// protocol handler...',
-    `"${mpvPath}" --register-protocol-handler`,
-    'echo Done. MPV button may now open MPV directly in Chrome/Edge.',
-    'pause',
-    '',
-  ].join('\r\n');
-  downloadTextFile('register-mpv-protocol.bat', bat);
+async function refreshMpvBridgeStatus() {
+  const el = $('#mpv-bridge-status');
+  if (!el) return;
+  const onLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(window.location.origin);
+  if (!onLocalhost) {
+    el.textContent = 'Run start-mpv-bridge.vbs on your PC, then click MPV';
+    el.classList.remove('ok');
+    return;
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${MPV_BRIDGE_PORT}/health`, { signal: AbortSignal.timeout(1200) });
+    if (res.ok) {
+      el.textContent = 'MPV bridge running — MPV button launches directly';
+      el.classList.add('ok');
+      return;
+    }
+  } catch (_) {}
+  el.textContent = 'Bridge not running — double-click start-mpv-bridge.vbs';
+  el.classList.remove('ok');
 }
 
 function toAbsoluteUrl(path) {
@@ -1046,7 +1036,12 @@ async function copyText(text) {
 }
 
 function tryOpenMpvProtocol(absUrl) {
-  const attempts = [`mpv://${absUrl}`, `mpv://${encodeURI(absUrl)}`];
+  const attempts = [
+    `mpv://${absUrl}`,
+    `mpv://${encodeURI(absUrl)}`,
+    absUrl.replace(/^https:\/\//i, 'mpv://https/'),
+    absUrl.replace(/^http:\/\//i, 'mpv://http/'),
+  ];
   for (const href of attempts) {
     try {
       const a = document.createElement('a');
@@ -1056,10 +1051,19 @@ function tryOpenMpvProtocol(absUrl) {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      return true;
     } catch (_) {}
   }
-  return false;
+}
+
+function launchMpvViaBridge(absUrl, title) {
+  const params = new URLSearchParams({
+    url: absUrl,
+    mpv: getMpvPath(),
+    title: title || 'Nexus Player',
+  });
+  const launchUrl = `http://127.0.0.1:${MPV_BRIDGE_PORT}/launch?${params}`;
+  const w = window.open(launchUrl, 'nexus-mpv-launch', 'noopener,noreferrer,width=320,height=80');
+  return !!w;
 }
 
 async function openInMpv() {
@@ -1095,13 +1099,16 @@ async function openInMpv() {
     return;
   }
 
+  if ($('#mpv-path')?.value) setMpvPath($('#mpv-path').value);
+
   tryOpenMpvProtocol(absUrl);
-  downloadMpvLauncher(absUrl);
-  await copyText(absUrl);
+  const opened = launchMpvViaBridge(absUrl, title);
 
   toast(
-    `Downloaded play-in-mpv.bat — double-click it to open in MPV.${title ? ' (' + title + ')' : ''} URL also copied for Ctrl+O.`,
-    10000,
+    opened
+      ? `Launching MPV…${title ? ' ' + title : ''}`
+      : 'Popup blocked — allow popups for this site, then click MPV again. Also run start-mpv-bridge.vbs once.',
+    8000,
   );
 }
 
@@ -1116,12 +1123,6 @@ $('#mpv-btn').addEventListener('click', async () => {
 $('#mpv-save-path-btn')?.addEventListener('click', () => {
   setMpvPath($('#mpv-path').value);
   toast('MPV path saved: ' + getMpvPath());
-});
-
-$('#mpv-register-btn')?.addEventListener('click', () => {
-  setMpvPath($('#mpv-path').value);
-  downloadMpvRegisterBat();
-  toast('Downloaded register-mpv-protocol.bat — run it once as administrator if needed', 8000);
 });
 
 $('#download-btn').addEventListener('click', async () => {
@@ -1298,7 +1299,7 @@ $$('.tab').forEach((tab) => {
     $$('.tab').forEach((t) => t.classList.toggle('active', t === tab));
     $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${tab.dataset.tab}`));
     if (tab.dataset.tab === 'library') refreshLibrary();
-    if (tab.dataset.tab === 'torrents') { refreshTorrents(); initPikpak(); initMpvSettings(); }
+    if (tab.dataset.tab === 'torrents') { refreshTorrents(); initPikpak(); initMpvSettings(); refreshMpvBridgeStatus(); }
   });
 });
 

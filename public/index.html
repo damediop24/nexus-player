@@ -204,13 +204,13 @@
             <div class="pikpak-status" id="pikpak-status">Not configured</div>
           </div>
           <div class="pikpak-box mpv-box" id="mpv-box">
-            <div class="pikpak-title">Local MPV (for Render / remote)</div>
-            <p class="pikpak-hint">Browsers cannot launch MPV directly. Set your MPV path — the MPV button downloads a launcher .bat.</p>
+            <div class="pikpak-title">Local MPV bridge</div>
+            <p class="pikpak-hint">Run <code>start-mpv-bridge.vbs</code> once on your PC (keeps running in background). Then the MPV button launches MPV instantly — no .bat.</p>
             <input id="mpv-path" type="text" placeholder="C:\mpv\mpv\mpv.exe" spellcheck="false" />
             <div class="panel-actions">
               <button class="btn btn-sm" id="mpv-save-path-btn" type="button">Save path</button>
-              <button class="btn btn-sm btn-ghost" id="mpv-register-btn" type="button">Setup one-click .bat</button>
             </div>
+            <div class="pikpak-status" id="mpv-bridge-status">Bridge not detected — run start-mpv-bridge.vbs</div>
           </div>
           <div class="panel-actions">
             <button class="btn btn-sm" id="torrent-paste-btn" type="button">Add magnet</button>
