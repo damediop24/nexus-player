@@ -808,6 +808,7 @@ async function initStatus() {
     $('#torrent-add-btn').style.opacity = '1';
   }
   await initPikpak();
+  initMpvSettings();
   startTorrentPolling();
 }
 
@@ -980,6 +981,55 @@ $('#resolve-btn').addEventListener('click', async () => {
   } catch (e) { toast(e.message, 4000); }
 });
 
+const DEFAULT_MPV_PATH = 'C:\\mpv\\mpv\\mpv.exe';
+
+function getMpvPath() {
+  return localStorage.getItem('nexus-mpv-path') || DEFAULT_MPV_PATH;
+}
+
+function setMpvPath(path) {
+  localStorage.setItem('nexus-mpv-path', path.trim() || DEFAULT_MPV_PATH);
+}
+
+function initMpvSettings() {
+  const input = $('#mpv-path');
+  if (!input) return;
+  input.value = getMpvPath();
+}
+
+function downloadTextFile(filename, content, mime = 'application/octet-stream') {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function downloadMpvLauncher(absUrl) {
+  const mpvPath = getMpvPath().replace(/"/g, '""');
+  const safeUrl = absUrl.replace(/"/g, '""');
+  const bat = [
+    '@echo off',
+    `start "" "${mpvPath}" --force-window=immediate "${safeUrl}"`,
+    '',
+  ].join('\r\n');
+  downloadTextFile('play-in-mpv.bat', bat);
+}
+
+function downloadMpvRegisterBat() {
+  const mpvPath = getMpvPath().replace(/"/g, '""');
+  const bat = [
+    '@echo off',
+    'echo Registering mpv:// protocol handler...',
+    `"${mpvPath}" --register-protocol-handler`,
+    'echo Done. MPV button may now open MPV directly in Chrome/Edge.',
+    'pause',
+    '',
+  ].join('\r\n');
+  downloadTextFile('register-mpv-protocol.bat', bat);
+}
+
 function toAbsoluteUrl(path) {
   if (!path) return '';
   if (/^https?:\/\//i.test(path)) return path;
@@ -1046,13 +1096,12 @@ async function openInMpv() {
   }
 
   tryOpenMpvProtocol(absUrl);
-  const copied = await copyText(absUrl);
+  downloadMpvLauncher(absUrl);
+  await copyText(absUrl);
 
   toast(
-    copied
-      ? `Stream URL copied — paste in MPV with Ctrl+O (Open URL).${title ? ' ' + title : ''} Run "mpv --register-protocol-handler" once for one-click open.`
-      : 'Open MPV → File → Open URL (Ctrl+O) and paste the stream link',
-    9000,
+    `Downloaded play-in-mpv.bat — double-click it to open in MPV.${title ? ' (' + title + ')' : ''} URL also copied for Ctrl+O.`,
+    10000,
   );
 }
 
@@ -1062,6 +1111,17 @@ $('#mpv-btn').addEventListener('click', async () => {
   } catch (e) {
     toast(e.message, 6000);
   }
+});
+
+$('#mpv-save-path-btn')?.addEventListener('click', () => {
+  setMpvPath($('#mpv-path').value);
+  toast('MPV path saved: ' + getMpvPath());
+});
+
+$('#mpv-register-btn')?.addEventListener('click', () => {
+  setMpvPath($('#mpv-path').value);
+  downloadMpvRegisterBat();
+  toast('Downloaded register-mpv-protocol.bat — run it once as administrator if needed', 8000);
 });
 
 $('#download-btn').addEventListener('click', async () => {
@@ -1238,7 +1298,7 @@ $$('.tab').forEach((tab) => {
     $$('.tab').forEach((t) => t.classList.toggle('active', t === tab));
     $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${tab.dataset.tab}`));
     if (tab.dataset.tab === 'library') refreshLibrary();
-    if (tab.dataset.tab === 'torrents') { refreshTorrents(); initPikpak(); }
+    if (tab.dataset.tab === 'torrents') { refreshTorrents(); initPikpak(); initMpvSettings(); }
   });
 });
 

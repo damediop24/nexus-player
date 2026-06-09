@@ -203,6 +203,15 @@
             </div>
             <div class="pikpak-status" id="pikpak-status">Not configured</div>
           </div>
+          <div class="pikpak-box mpv-box" id="mpv-box">
+            <div class="pikpak-title">Local MPV (for Render / remote)</div>
+            <p class="pikpak-hint">Browsers cannot launch MPV directly. Set your MPV path — the MPV button downloads a launcher .bat.</p>
+            <input id="mpv-path" type="text" placeholder="C:\mpv\mpv\mpv.exe" spellcheck="false" />
+            <div class="panel-actions">
+              <button class="btn btn-sm" id="mpv-save-path-btn" type="button">Save path</button>
+              <button class="btn btn-sm btn-ghost" id="mpv-register-btn" type="button">Setup one-click .bat</button>
+            </div>
+          </div>
           <div class="panel-actions">
             <button class="btn btn-sm" id="torrent-paste-btn" type="button">Add magnet</button>
             <label class="btn btn-sm btn-ghost torrent-file-btn">Add .torrent<input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden /></label>

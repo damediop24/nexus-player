@@ -784,6 +784,8 @@ dialog textarea {
 .pikpak-status { font-size: 0.72rem; color: var(--muted); margin-top: 0.45rem; }
 .pikpak-status.ok { color: var(--success); }
 
+.mpv-box { margin-bottom: 0.75rem; }
+
 .cloud-status {
   margin-top: 0.45rem;
   padding: 0.45rem 0.55rem;
