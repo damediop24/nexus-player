@@ -51,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/health':
             self._json({'ok': True, 'port': PORT, 'mpv': DEFAULT_MPV})
             return
-        if parsed.path == '/launch':
+        if parsed.path in ('/launch', '/launch-form'):
             params = urllib.parse.parse_qs(parsed.query)
             url = (params.get('url') or [''])[0]
             mpv = urllib.parse.unquote((params.get('mpv') or [DEFAULT_MPV])[0])
@@ -74,16 +74,21 @@ class Handler(BaseHTTPRequestHandler):
         self._html('<p>Nexus MPV Bridge is running.</p>', 200)
 
     def do_POST(self):
-        if self.path != '/launch':
+        if self.path not in ('/launch', '/launch-form'):
             self._json({'error': 'not found'}, 404)
             return
         length = int(self.headers.get('Content-Length', 0))
         raw = self.rfile.read(length) if length else b'{}'
-        try:
-            data = json.loads(raw.decode('utf-8'))
-        except json.JSONDecodeError:
-            self._json({'error': 'invalid json'}, 400)
-            return
+        content_type = self.headers.get('Content-Type', '')
+        if 'application/x-www-form-urlencoded' in content_type:
+            params = urllib.parse.parse_qs(raw.decode('utf-8'))
+            data = {k: (v[0] if v else '') for k, v in params.items()}
+        else:
+            try:
+                data = json.loads(raw.decode('utf-8'))
+            except json.JSONDecodeError:
+                self._json({'error': 'invalid json'}, 400)
+                return
         url = data.get('url', '')
         mpv = data.get('mpv_path') or data.get('mpv') or DEFAULT_MPV
         title = data.get('title') or 'Nexus Player'
@@ -92,9 +97,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             self._exec_launch(url, mpv, title)
-            self._json({'ok': True})
+            if self.path == '/launch-form' or 'application/x-www-form-urlencoded' in content_type:
+                self._html(
+                    '<!doctype html><html><head><meta charset="utf-8"><title>MPV</title></head>'
+                    '<body style="font-family:sans-serif;padding:1rem">'
+                    '<p>MPV launched.</p><script>setTimeout(()=>window.close(),400)</script></body></html>'
+                )
+            else:
+                self._json({'ok': True})
         except Exception as exc:
-            self._json({'error': str(exc)}, 500)
+            if self.path == '/launch-form' or 'application/x-www-form-urlencoded' in content_type:
+                self._html(f'<p>Error: {exc}</p>', 500)
+            else:
+                self._json({'error': str(exc)}, 500)
 
     def _exec_launch(self, url: str, mpv: str, title: str):
         if not os.path.isfile(mpv):

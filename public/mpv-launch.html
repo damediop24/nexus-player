@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Launch MPV</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 1.25rem; }
+    a { color: #6cf; }
+    code { background: #222; padding: 0.15rem 0.35rem; border-radius: 4px; }
+    .btn {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.5rem 1rem;
+      background: #3d5afe;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <p id="status">Launching MPV…</p>
+  <p id="actions" hidden>
+    <button type="button" class="btn" id="retry-btn">Retry launch</button>
+  </p>
+  <script>
+    const p = new URLSearchParams(location.search);
+    const stream = p.get('url') || '';
+    const mpv = p.get('mpv') || 'C:\\mpv\\mpv\\mpv.exe';
+    const title = p.get('title') || 'Nexus Player';
+    const port = p.get('port') || '9340';
+    const status = document.getElementById('status');
+    const actions = document.getElementById('actions');
+
+    function launchViaForm() {
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = `http://127.0.0.1:${port}/launch-form`;
+      form.target = '_self';
+      for (const [name, value] of Object.entries({ url: stream, mpv, title })) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+    }
+
+    function launchViaGet() {
+      const q = new URLSearchParams({ url: stream, mpv, title });
+      const bridge = `http://127.0.0.1:${port}/launch?${q}`;
+      location.replace(bridge);
+    }
+
+    function launch() {
+      if (!stream) {
+        status.textContent = 'Missing stream URL.';
+        return;
+      }
+      const q = new URLSearchParams({ url: stream, mpv, title });
+      const bridge = `http://127.0.0.1:${port}/launch?${q}`;
+      status.textContent = 'Opening local MPV bridge…';
+      if (bridge.length > 5500 || stream.length > 1800) {
+        launchViaForm();
+      } else {
+        launchViaGet();
+      }
+      setTimeout(() => {
+        status.innerHTML = [
+          'If MPV did not open:',
+          '<br>1. Double-click <code>start-mpv-bridge.vbs</code> in the nexus-player folder',
+          '<br>2. Click <strong>Retry launch</strong> below',
+          '<br>3. Or paste the stream URL in MPV (Ctrl+O)',
+        ].join('');
+        actions.hidden = false;
+      }, 2500);
+    }
+
+    document.getElementById('retry-btn').addEventListener('click', () => {
+      if (stream.length > 1800) launchViaForm();
+      else launchViaGet();
+    });
+
+    launch();
+  </script>
+</body>
+</html>

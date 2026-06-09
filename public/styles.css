@@ -540,6 +540,60 @@ body {
   color: var(--muted);
 }
 
+.meta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.meta-actions .btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mpv-dialog-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0.75rem;
+  word-break: break-all;
+}
+
+.mpv-dialog-actions {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.mpv-dialog-actions .btn-accent {
+  text-decoration: none;
+}
+
+.playlist-pick-list {
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0.5rem 0;
+}
+
+.playlist-pick-list li {
+  padding: 0.55rem 0.65rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  border: 1px solid transparent;
+}
+
+.playlist-pick-list li:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.dialog-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
 /* Sidebar */
 .sidebar {
   width: 340px;

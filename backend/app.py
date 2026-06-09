@@ -191,7 +191,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.3.0',
+        'version': '2.3.2',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),

@@ -420,6 +420,7 @@ function setMeta(info) {
   nowPlaying.textContent = info.title || 'Playing';
   if (isPikpakMedia(info)) updateCloudStatus();
   else cloudStatus.classList.add('hidden');
+  refreshFavoriteState();
 }
 
 function populateFormats(formats, selected) {
@@ -1191,15 +1192,73 @@ async function copyText(text) {
   }
 }
 
-function launchMpvViaBridge(absUrl, title) {
-  const params = new URLSearchParams({
+function buildMpvBridgeGetUrl(absUrl, title) {
+  const q = new URLSearchParams({
     url: absUrl,
     mpv: getMpvPath(),
     title: title || 'Nexus Player',
   });
-  const launchUrl = `http://127.0.0.1:${MPV_BRIDGE_PORT}/launch?${params}`;
-  const w = window.open(launchUrl, 'nexus-mpv-launch', 'noopener,noreferrer,width=320,height=80');
+  return `http://127.0.0.1:${MPV_BRIDGE_PORT}/launch?${q}`;
+}
+
+function launchMpvViaLaunchPage(absUrl, title) {
+  const page = new URL('/mpv-launch.html', window.location.origin);
+  page.searchParams.set('url', absUrl);
+  page.searchParams.set('mpv', getMpvPath());
+  page.searchParams.set('title', title || 'Nexus Player');
+  page.searchParams.set('port', MPV_BRIDGE_PORT);
+  const w = window.open(page.href, 'nexusMpvLaunch', 'width=440,height=180');
   return !!w;
+}
+
+function tryOpenUrl(url, name) {
+  const w = window.open(url, name || '_blank');
+  if (w) return true;
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  return true;
+}
+
+function showMpvLaunchDialog(absUrl, title) {
+  const bridgeUrl = buildMpvBridgeGetUrl(absUrl, title);
+  const useForm = bridgeUrl.length > 5500 || absUrl.length > 1800;
+  const link = $('#mpv-dialog-link');
+  const formBtn = $('#mpv-dialog-form-btn');
+  const status = $('#mpv-dialog-status');
+  const form = $('#mpv-dialog-form');
+
+  if (link) {
+    if (useForm) {
+      link.hidden = true;
+      if (formBtn) formBtn.hidden = false;
+      if (form) {
+        form.action = `http://127.0.0.1:${MPV_BRIDGE_PORT}/launch-form`;
+        $('#mpv-form-url').value = absUrl;
+        $('#mpv-form-mpv').value = getMpvPath();
+        $('#mpv-form-title').value = title || 'Nexus Player';
+      }
+    } else {
+      link.hidden = false;
+      link.href = bridgeUrl;
+      if (formBtn) formBtn.hidden = true;
+    }
+  }
+
+  if (status) {
+    status.textContent = useForm
+      ? `${title || 'Video'} — long URL: click Launch (long URL) after starting the bridge.`
+      : `${title || 'Video'} — click Launch MPV (run start-mpv-bridge.vbs if nothing happens).`;
+  }
+
+  const dialog = $('#mpv-dialog');
+  if (dialog) dialog.dataset.streamUrl = absUrl;
+  dialog?.showModal();
 }
 
 async function openInMpv() {
@@ -1237,43 +1296,25 @@ async function openInMpv() {
 
   if ($('#mpv-path')?.value) setMpvPath($('#mpv-path').value);
 
-  const opened = launchMpvViaBridge(absUrl, title);
-  const cmd = `"${getMpvPath()}" "${absUrl}"`;
-  await copyText(cmd);
+  const bridgeUrl = buildMpvBridgeGetUrl(absUrl, title);
+  const useForm = bridgeUrl.length > 5500 || absUrl.length > 1800;
 
-  toast(
-    opened
-      ? `Launching MPV via bridge…${title ? ' ' + title : ''} Command copied to clipboard as backup.`
-      : 'Allow popups, run start-mpv-bridge.vbs on your PC, then click MPV again. MPV command copied to clipboard.',
-    10000,
-  );
+  if (!useForm) {
+    tryOpenUrl(bridgeUrl, 'nexusMpvBridge');
+  } else {
+    launchMpvViaLaunchPage(absUrl, title);
+  }
+
+  showMpvLaunchDialog(absUrl, title);
+  await copyText(absUrl);
+  toast('MPV launcher ready — click Launch MPV in the dialog if the player did not open.', 8000);
 }
 
-$('#mpv-btn').addEventListener('click', async () => {
-  try {
-    await openInMpv();
-  } catch (e) {
-    toast(e.message, 6000);
+async function addToFavorites() {
+  if (!currentMedia?.source_url) {
+    toast('Play something first');
+    return;
   }
-});
-
-$('#mpv-save-path-btn')?.addEventListener('click', () => {
-  setMpvPath($('#mpv-path').value);
-  toast('MPV path saved: ' + getMpvPath());
-});
-
-$('#download-btn').addEventListener('click', async () => {
-  const url = currentMedia?.source_url || urlInput.value.trim();
-  if (!url) return;
-  try {
-    await api('/api/download', { method: 'POST', body: JSON.stringify({ url, format_id: qualitySelect.value || null }) });
-    toast('Download started');
-    refreshDownloads();
-  } catch (e) { toast(e.message, 4000); }
-});
-
-$('#fav-btn').addEventListener('click', async () => {
-  if (!currentMedia?.source_url) return;
   try {
     await api('/api/favorites', {
       method: 'POST',
@@ -1291,10 +1332,149 @@ $('#fav-btn').addEventListener('click', async () => {
       site: currentMedia.site,
     });
     await syncLibrary();
-    toast('Added to favorites');
+    updateFavoriteButtons(true);
+    toast('Added to favorites ★');
     refreshFavorites();
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    if (/409|already/i.test(e.message)) {
+      updateFavoriteButtons(true);
+      toast('Already in favorites');
+    } else {
+      toast(e.message, 5000);
+    }
+  }
+}
+
+function updateFavoriteButtons(isFav) {
+  const on = !!isFav;
+  $('#fav-btn')?.classList.toggle('active', on);
+  $('#meta-fav-btn')?.classList.toggle('active', on);
+  if ($('#meta-fav-btn')) {
+    $('#meta-fav-btn').textContent = on ? '★ Favorited' : '★ Favorite';
+  }
+}
+
+async function refreshFavoriteState() {
+  if (!currentMedia?.source_url) {
+    updateFavoriteButtons(false);
+    return;
+  }
+  const lib = getLocalLibrary().favorites || [];
+  const server = await api('/api/favorites').catch(() => []);
+  const isFav = [...lib, ...server].some((f) => f.url === currentMedia.source_url);
+  updateFavoriteButtons(isFav);
+}
+
+async function showAddToPlaylistDialog() {
+  if (!currentMedia?.source_url) {
+    toast('Play something first');
+    return;
+  }
+  const list = $('#playlist-pick-list');
+  list.innerHTML = '<li>Loading…</li>';
+  $('#playlist-dialog').showModal();
+  try {
+    const playlists = await api('/api/playlists');
+    list.innerHTML = '';
+    if (!playlists.length) {
+      list.innerHTML = '<li class="item-sub">No playlists — create one below</li>';
+      return;
+    }
+    playlists.forEach((pl) => {
+      const li = document.createElement('li');
+      li.textContent = `${pl.name} (${pl.items.length})`;
+      li.addEventListener('click', async () => {
+        try {
+          await api(`/api/playlists/${pl.id}/items`, {
+            method: 'POST',
+            body: JSON.stringify({
+              url: currentMedia.source_url,
+              title: currentMedia.title,
+            }),
+          });
+          $('#playlist-dialog').close();
+          toast(`Added to "${pl.name}"`);
+          refreshPlaylists();
+        } catch (e) {
+          toast(e.message, 5000);
+        }
+      });
+      list.appendChild(li);
+    });
+  } catch (e) {
+    list.innerHTML = `<li>${esc(e.message)}</li>`;
+  }
+}
+
+$('#mpv-btn').addEventListener('click', async () => {
+  try {
+    await openInMpv();
+  } catch (e) {
+    toast(e.message, 6000);
+  }
 });
+
+$('#mpv-save-path-btn')?.addEventListener('click', () => {
+  setMpvPath($('#mpv-path').value);
+  toast('MPV path saved: ' + getMpvPath());
+});
+
+$('#mpv-test-btn')?.addEventListener('click', () => {
+  setMpvPath($('#mpv-path').value);
+  const testUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+  tryOpenUrl(buildMpvBridgeGetUrl(testUrl, 'MPV test'), 'nexusMpvTest');
+  showMpvLaunchDialog(testUrl, 'MPV test');
+  toast('MPV test — run start-mpv-bridge.vbs if nothing opens', 8000);
+});
+
+$('#mpv-dialog-close')?.addEventListener('click', () => $('#mpv-dialog')?.close());
+$('#mpv-dialog-link')?.addEventListener('click', () => {
+  setTimeout(() => $('#mpv-dialog')?.close(), 600);
+});
+$('#mpv-dialog-form-btn')?.addEventListener('click', () => {
+  $('#mpv-dialog-form')?.requestSubmit();
+  toast('Sent to MPV bridge…');
+});
+$('#mpv-dialog-copy')?.addEventListener('click', async () => {
+  const url = $('#mpv-dialog')?.dataset.streamUrl;
+  if (url) {
+    await copyText(url);
+    toast('Stream URL copied');
+  }
+});
+
+$('#new-playlist-from-dialog')?.addEventListener('click', async () => {
+  const name = prompt('Playlist name');
+  if (!name?.trim()) return;
+  try {
+    const pl = await api('/api/playlists', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+    await api(`/api/playlists/${pl.id}/items`, {
+      method: 'POST',
+      body: JSON.stringify({ url: currentMedia?.source_url, title: currentMedia?.title }),
+    });
+    $('#playlist-dialog').close();
+    toast(`Created "${name}" and added video`);
+    refreshPlaylists();
+  } catch (e) {
+    toast(e.message, 5000);
+  }
+});
+
+$('#download-btn').addEventListener('click', async () => {
+  const url = currentMedia?.source_url || urlInput.value.trim();
+  if (!url) return;
+  try {
+    await api('/api/download', { method: 'POST', body: JSON.stringify({ url, format_id: qualitySelect.value || null }) });
+    toast('Download started');
+    refreshDownloads();
+  } catch (e) { toast(e.message, 4000); }
+});
+
+$('#fav-btn').addEventListener('click', () => addToFavorites());
+$('#playlist-btn')?.addEventListener('click', () => showAddToPlaylistDialog());
+$('#meta-fav-btn')?.addEventListener('click', () => addToFavorites());
+$('#meta-playlist-btn')?.addEventListener('click', () => showAddToPlaylistDialog());
+$('#meta-mpv-btn')?.addEventListener('click', () => openInMpv().catch((e) => toast(e.message, 6000)));
 
 $('#toggle-btn').addEventListener('click', async () => {
   if (video.paused) {

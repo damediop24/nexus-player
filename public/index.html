@@ -123,6 +123,7 @@
                 </select>
                 <button class="ctrl-btn" id="ab-btn" title="A-B Loop (set A then B)">A-B</button>
                 <button class="ctrl-btn" id="fav-btn" title="Add to favorites">★</button>
+                <button class="ctrl-btn" id="playlist-btn" title="Add to playlist">+♫</button>
                 <button class="ctrl-btn" id="download-btn" title="Download">↓</button>
                 <button class="ctrl-btn" id="repeat-btn" title="Repeat queue">↻</button>
               </div>
@@ -138,6 +139,11 @@
             <div id="cloud-status" class="cloud-status hidden">
               <div class="cloud-status-text" id="cloud-status-text"></div>
               <div class="torrent-progress"><div class="torrent-progress-bar" id="cloud-progress-bar"></div></div>
+            </div>
+            <div class="meta-actions">
+              <button id="meta-fav-btn" class="btn btn-sm" type="button" title="Add to favorites">★ Favorite</button>
+              <button id="meta-playlist-btn" class="btn btn-sm btn-ghost" type="button" title="Add to playlist">+ Playlist</button>
+              <button id="meta-mpv-btn" class="btn btn-sm btn-ghost" type="button" title="Open in local MPV">▶ MPV</button>
             </div>
           </div>
         </div>
@@ -205,10 +211,11 @@
           </div>
           <div class="pikpak-box mpv-box" id="mpv-box">
             <div class="pikpak-title">Local MPV bridge</div>
-            <p class="pikpak-hint">Run <code>start-mpv-bridge.vbs</code> once on your PC (keeps running in background). Then the MPV button launches MPV instantly — no .bat.</p>
+            <p class="pikpak-hint">Run <code>start-mpv-bridge.vbs</code> or <code>install-mpv-bridge-startup.vbs</code> once. MPV opens via a local redirect — no .bat per video.</p>
             <input id="mpv-path" type="text" placeholder="C:\mpv\mpv\mpv.exe" spellcheck="false" />
             <div class="panel-actions">
               <button class="btn btn-sm" id="mpv-save-path-btn" type="button">Save path</button>
+              <button class="btn btn-sm btn-ghost" id="mpv-test-btn" type="button">Test MPV</button>
             </div>
             <div class="pikpak-status" id="mpv-bridge-status">Bridge not detected — run start-mpv-bridge.vbs</div>
           </div>
@@ -252,6 +259,35 @@
       <div class="dialog-actions">
         <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
         <button id="magnet-submit" value="ok" class="btn btn-accent" type="submit">Add &amp; play</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="mpv-dialog">
+    <h3>Open in MPV</h3>
+    <p class="dialog-hint">Run <code>start-mpv-bridge.vbs</code> once on your PC (Torrents tab has auto-start installer).</p>
+    <div id="mpv-dialog-status" class="mpv-dialog-status">Preparing launch…</div>
+    <div class="dialog-actions mpv-dialog-actions">
+      <button id="mpv-dialog-close" class="btn btn-ghost" type="button">Close</button>
+      <a id="mpv-dialog-link" class="btn btn-accent" href="#" target="_blank" rel="noopener">Launch MPV</a>
+      <button id="mpv-dialog-form-btn" class="btn btn-sm btn-ghost" type="button" hidden>Launch (long URL)</button>
+      <button id="mpv-dialog-copy" class="btn btn-sm btn-ghost" type="button">Copy stream URL</button>
+    </div>
+    <form id="mpv-dialog-form" method="POST" action="http://127.0.0.1:9340/launch-form" target="_blank" hidden>
+      <input type="hidden" name="url" id="mpv-form-url" />
+      <input type="hidden" name="mpv" id="mpv-form-mpv" />
+      <input type="hidden" name="title" id="mpv-form-title" />
+    </form>
+  </dialog>
+
+  <dialog id="playlist-dialog">
+    <form method="dialog">
+      <h3>Add to playlist</h3>
+      <p class="dialog-hint">Choose a playlist for the current video.</p>
+      <ul id="playlist-pick-list" class="playlist-pick-list"></ul>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
+        <button id="new-playlist-from-dialog" class="btn btn-sm btn-ghost" type="button">+ New playlist</button>
       </div>
     </form>
   </dialog>
