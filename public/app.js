@@ -38,6 +38,10 @@ let hls = null;
 let dashPlayer = null;
 let currentMedia = null;
 let fitMode = localStorage.getItem('nexus-fit-mode') || 'contain';
+const LIBRARY_KEY = 'nexus-library-v1';
+let prefetchController = null;
+let prefetchBlobUrl = null;
+const MAX_BLOB_CACHE = 400 * 1024 * 1024;
 
 const FIT_MODES = ['contain', 'cover', 'fill', 'none'];
 const FIT_LABELS = { contain: 'Fit', cover: 'Crop', fill: 'Stretch', none: 'Original' };
@@ -172,9 +176,130 @@ function setVolume(val) {
   video.muted = v === 0;
 }
 
+function getLocalLibrary() {
+  try {
+    return JSON.parse(localStorage.getItem(LIBRARY_KEY) || '{"history":[],"favorites":[]}');
+  } catch (_) {
+    return { history: [], favorites: [] };
+  }
+}
+
+function saveLocalLibrary(lib) {
+  localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib));
+}
+
+function mergeByUrl(items, key = 'url') {
+  const seen = new Map();
+  for (const item of items) {
+    const k = item[key];
+    if (!k) continue;
+    if (!seen.has(k)) seen.set(k, item);
+  }
+  return [...seen.values()];
+}
+
+function trackLocalHistory(entry) {
+  const lib = getLocalLibrary();
+  const url = entry.url;
+  if (!url) return;
+  lib.history = lib.history.filter((h) => h.url !== url);
+  lib.history.unshift({
+    ...entry,
+    played_at: entry.played_at || new Date().toISOString(),
+  });
+  lib.history = lib.history.slice(0, 300);
+  saveLocalLibrary(lib);
+}
+
+function trackLocalFavorite(entry) {
+  const lib = getLocalLibrary();
+  if (!entry.url || lib.favorites.some((f) => f.url === entry.url)) return;
+  lib.favorites.unshift({ ...entry, added_at: new Date().toISOString() });
+  lib.favorites = lib.favorites.slice(0, 200);
+  saveLocalLibrary(lib);
+}
+
+function updateLocalHistoryPosition(url, position) {
+  const lib = getLocalLibrary();
+  const item = lib.history.find((h) => h.url === url);
+  if (item) {
+    item.position = position;
+    item.played_at = new Date().toISOString();
+    saveLocalLibrary(lib);
+  }
+}
+
+async function syncLibrary() {
+  const local = getLocalLibrary();
+  try {
+    const merged = await api('/api/library/sync', {
+      method: 'POST',
+      body: JSON.stringify(local),
+    });
+    saveLocalLibrary({
+      history: merged.history || local.history,
+      favorites: merged.favorites || local.favorites,
+    });
+  } catch (_) {}
+}
+
+function getBufferedPercent() {
+  const dur = getDuration();
+  if (!dur || !video.buffered.length) return 0;
+  let maxEnd = 0;
+  for (let i = 0; i < video.buffered.length; i++) {
+    maxEnd = Math.max(maxEnd, video.buffered.end(i));
+  }
+  return (maxEnd / dur) * 100;
+}
+
+async function prefetchToBlob(url, total, signal) {
+  const res = await fetch(url, { signal });
+  if (!res.ok || !res.body) return;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (total) progressBuffered.style.width = `${(received / total) * 100}%`;
+  }
+  if (prefetchBlobUrl) URL.revokeObjectURL(prefetchBlobUrl);
+  const blob = new Blob(chunks, { type: res.headers.get('content-type') || 'video/mp4' });
+  prefetchBlobUrl = URL.createObjectURL(blob);
+  const t = video.currentTime;
+  const playing = !video.paused;
+  video.src = prefetchBlobUrl;
+  video.addEventListener('loadedmetadata', () => {
+    if (t > 0) video.currentTime = t;
+    if (playing) tryPlay();
+  }, { once: true });
+}
+
+async function loadProgressive(url) {
+  if (prefetchController) prefetchController.abort();
+  prefetchController = new AbortController();
+  const signal = prefetchController.signal;
+  video.preload = 'auto';
+  video.src = url;
+  video.addEventListener('canplay', () => tryPlay(), { once: true });
+  try {
+    const head = await fetch(url, { method: 'HEAD', signal });
+    const len = +(head.headers.get('content-length') || 0);
+    if (len && len <= MAX_BLOB_CACHE) prefetchToBlob(url, len, signal);
+  } catch (_) {}
+}
+
 function loadSource(url, type = 'progressive') {
   destroyHls();
   destroyDash();
+  if (prefetchController) prefetchController.abort();
+  if (prefetchBlobUrl) {
+    URL.revokeObjectURL(prefetchBlobUrl);
+    prefetchBlobUrl = null;
+  }
   video.removeAttribute('src');
   video.load();
 
@@ -185,8 +310,10 @@ function loadSource(url, type = 'progressive') {
   } else if (type === 'hls' && typeof Hls !== 'undefined' && Hls.isSupported()) {
     hls = new Hls({
       enableWorker: true,
-      maxBufferLength: 60,
-      maxMaxBufferLength: 120,
+      maxBufferLength: 300,
+      maxMaxBufferLength: 600,
+      backBufferLength: 120,
+      progressive: true,
     });
     hls.loadSource(url);
     hls.attachMedia(video);
@@ -198,8 +325,7 @@ function loadSource(url, type = 'progressive') {
     video.src = url;
     video.addEventListener('loadedmetadata', () => tryPlay(), { once: true });
   } else {
-    video.src = url;
-    video.addEventListener('canplay', () => tryPlay(), { once: true });
+    loadProgressive(url);
     video.addEventListener('loadedmetadata', () => {
       if (video.duration > 0 && video.duration < 1 && video.seekable.length) {
         toast('Stream looks invalid — try MPV or replay the magnet', 6000);
@@ -364,10 +490,8 @@ function updateProgress() {
   timeCurrent.textContent = fmtTime(video.currentTime);
   timeTotal.textContent = fmtTime(dur);
 
-  if (isFinite(video.duration) && video.buffered.length) {
-    const buf = (video.buffered.end(video.buffered.length - 1) / video.duration) * 100;
-    progressBuffered.style.width = buf + '%';
-  }
+  const bufPct = getBufferedPercent();
+  if (bufPct) progressBuffered.style.width = bufPct + '%';
 
   if (abPointA !== null && abPointB !== null && dur) {
     const aPct = (abPointA / dur) * 100;
@@ -389,6 +513,24 @@ function updateAbMarkers() {
   if (show && dur) updateProgress();
 }
 
+function recordPlayback(info) {
+  const source = info.source_url || info.url;
+  if (!source) return;
+  trackLocalHistory({
+    url: source,
+    title: info.title,
+    thumbnail: info.thumbnail,
+    duration: info.duration || 0,
+    site: info.site,
+    format_id: info.best_format_id,
+    position: 0,
+  });
+  api('/api/library/sync', {
+    method: 'POST',
+    body: JSON.stringify(getLocalLibrary()),
+  }).catch(() => {});
+}
+
 async function playResolved(info) {
   currentMedia = info;
   overlay.classList.add('hidden');
@@ -396,6 +538,7 @@ async function playResolved(info) {
   populateFormats(info.formats || [], info.best_format_id);
   populateSubtitles(info.subtitles || []);
   loadSource(info.play_url, info.stream_type);
+  recordPlayback(info);
   toast('Playing: ' + (info.title || 'media'));
   wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
   if (isPikpakMedia(info)) updateCloudStatus();
@@ -631,6 +774,7 @@ async function playUrl(url, formatId = null, resumePos = 0) {
     video.addEventListener('loadedmetadata', seekTo, { once: true });
     video.addEventListener('durationchange', seekTo, { once: true });
 
+    recordPlayback(info);
     toast('Playing: ' + (info.title || 'media'));
     wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
     if (isPikpakMedia(info)) updateCloudStatus();
@@ -683,11 +827,19 @@ async function refreshQueue() {
 }
 
 async function refreshHistory() {
-  renderList(historyList, await api('/api/history'), (item) => playUrl(item.url, item.format_id, item.position || 0));
+  const local = getLocalLibrary().history || [];
+  const server = await api('/api/history').catch(() => []);
+  const merged = mergeByUrl([...local, ...server]).slice(0, 300);
+  saveLocalLibrary({ ...getLocalLibrary(), history: merged });
+  renderList(historyList, merged, (item) => playUrl(item.url, item.format_id, item.position || 0));
 }
 
 async function refreshFavorites() {
-  renderList(favoritesList, await api('/api/favorites'), (item) => playUrl(item.url));
+  const local = getLocalLibrary().favorites || [];
+  const server = await api('/api/favorites').catch(() => []);
+  const merged = mergeByUrl([...local, ...server]);
+  saveLocalLibrary({ ...getLocalLibrary(), favorites: merged });
+  renderList(favoritesList, merged, (item) => playUrl(item.url));
 }
 
 async function refreshDownloads() {
@@ -748,6 +900,7 @@ function scheduleProgressSave() {
         format_id: currentMedia.best_format_id,
       }),
     }).catch(() => {});
+    updateLocalHistoryPosition(currentMedia.source_url, video.currentTime);
   }, 3000);
 }
 
@@ -809,7 +962,10 @@ async function initStatus() {
   }
   await initPikpak();
   initMpvSettings();
+  await syncLibrary();
   startTorrentPolling();
+  refreshHistory();
+  refreshFavorites();
 }
 
 async function initSettings() {
@@ -1035,26 +1191,6 @@ async function copyText(text) {
   }
 }
 
-function tryOpenMpvProtocol(absUrl) {
-  const attempts = [
-    `mpv://${absUrl}`,
-    `mpv://${encodeURI(absUrl)}`,
-    absUrl.replace(/^https:\/\//i, 'mpv://https/'),
-    absUrl.replace(/^http:\/\//i, 'mpv://http/'),
-  ];
-  for (const href of attempts) {
-    try {
-      const a = document.createElement('a');
-      a.href = href;
-      a.rel = 'noopener';
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch (_) {}
-  }
-}
-
 function launchMpvViaBridge(absUrl, title) {
   const params = new URLSearchParams({
     url: absUrl,
@@ -1101,14 +1237,15 @@ async function openInMpv() {
 
   if ($('#mpv-path')?.value) setMpvPath($('#mpv-path').value);
 
-  tryOpenMpvProtocol(absUrl);
   const opened = launchMpvViaBridge(absUrl, title);
+  const cmd = `"${getMpvPath()}" "${absUrl}"`;
+  await copyText(cmd);
 
   toast(
     opened
-      ? `Launching MPV…${title ? ' ' + title : ''}`
-      : 'Popup blocked — allow popups for this site, then click MPV again. Also run start-mpv-bridge.vbs once.',
-    8000,
+      ? `Launching MPV via bridge…${title ? ' ' + title : ''} Command copied to clipboard as backup.`
+      : 'Allow popups, run start-mpv-bridge.vbs on your PC, then click MPV again. MPV command copied to clipboard.',
+    10000,
   );
 }
 
@@ -1147,6 +1284,13 @@ $('#fav-btn').addEventListener('click', async () => {
         site: currentMedia.site,
       }),
     });
+    trackLocalFavorite({
+      url: currentMedia.source_url,
+      title: currentMedia.title,
+      thumbnail: currentMedia.thumbnail,
+      site: currentMedia.site,
+    });
+    await syncLibrary();
     toast('Added to favorites');
     refreshFavorites();
   } catch (e) { toast(e.message); }
@@ -1197,9 +1341,21 @@ video.addEventListener('ended', () => {
   playNext();
 });
 
-video.addEventListener('click', async () => {
-  if (video.paused) await tryPlay();
-  else video.pause();
+let videoClickTimer = null;
+video.addEventListener('click', () => {
+  clearTimeout(videoClickTimer);
+  videoClickTimer = setTimeout(async () => {
+    if (video.paused) await tryPlay();
+    else video.pause();
+  }, 280);
+});
+
+video.addEventListener('dblclick', (e) => {
+  e.preventDefault();
+  clearTimeout(videoClickTimer);
+  const wrap = $('#player-wrap');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else wrap.requestFullscreen();
 });
 
 video.addEventListener('error', () => {
@@ -1208,7 +1364,12 @@ video.addEventListener('error', () => {
   toast('Video error: ' + (codes[err?.code] || 'Unknown') + ' — try MPV or another quality', 6000);
 });
 
-video.addEventListener('waiting', () => { nowPlaying.textContent = (currentMedia?.title || 'Loading') + '…'; });
+video.addEventListener('progress', () => {
+  const bufPct = getBufferedPercent();
+  if (bufPct) progressBuffered.style.width = bufPct + '%';
+});
+
+video.addEventListener('waiting', () => { nowPlaying.textContent = (currentMedia?.title || 'Buffering') + '…'; });
 video.addEventListener('playing', () => { nowPlaying.textContent = currentMedia?.title || 'Playing'; });
 
 $('#mute-btn').addEventListener('click', () => {
@@ -1262,7 +1423,9 @@ $$('.fit-btn').forEach((btn) => {
 
 document.addEventListener('fullscreenchange', () => {
   const fs = !!document.fullscreenElement;
-  $('#fs-fit-bar').style.display = fs ? 'flex' : '';
+  $('#fs-fit-bar').style.display = 'none';
+  const fitSelect = $('#fit-select');
+  if (fitSelect) fitSelect.style.display = fs ? 'none' : '';
 });
 
 $('#clear-queue-btn').addEventListener('click', async () => {

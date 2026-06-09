@@ -15,6 +15,8 @@ COPY . .
 
 WORKDIR /app/backend
 
+RUN mkdir -p /data
+ENV DATABASE_PATH=/data/nexus.db
 ENV PORT=8899
 EXPOSE 8899
 

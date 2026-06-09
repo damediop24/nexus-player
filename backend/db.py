@@ -1,8 +1,10 @@
 import json
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / 'nexus.db'
+DB_PATH = Path(os.environ.get('DATABASE_PATH', Path(__file__).parent / 'nexus.db'))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_conn():

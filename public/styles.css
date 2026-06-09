@@ -237,7 +237,12 @@ body {
 
 .player-wrap:fullscreen .fs-fit-bar,
 .player-wrap:-webkit-full-screen .fs-fit-bar {
-  display: flex;
+  display: none !important;
+}
+
+.player-wrap:fullscreen #fit-select,
+.player-wrap:-webkit-full-screen #fit-select {
+  display: none !important;
 }
 
 .fs-fit-label {

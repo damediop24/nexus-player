@@ -11,3 +11,5 @@ services:
     envVars:
       - key: PORT
         value: 10000
+      - key: DATABASE_PATH
+        value: /data/nexus.db

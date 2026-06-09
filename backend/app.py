@@ -81,6 +81,11 @@ class FavoriteRequest(BaseModel):
     site: Optional[str] = None
 
 
+class LibrarySyncRequest(BaseModel):
+    history: list[dict] = []
+    favorites: list[dict] = []
+
+
 class DownloadRequest(BaseModel):
     url: str
     format_id: Optional[str] = None
@@ -186,7 +191,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.2.5',
+        'version': '2.3.0',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -377,6 +382,74 @@ def remove_favorite(fav_id: int):
     conn.commit()
     conn.close()
     return {'ok': True}
+
+
+@app.post('/api/library/sync')
+def library_sync(req: LibrarySyncRequest):
+    conn = get_conn()
+
+    for item in req.history:
+        url = (item.get('url') or '').strip()
+        if not url:
+            continue
+        row = conn.execute(
+            'SELECT id FROM history WHERE url = ? ORDER BY played_at DESC LIMIT 1',
+            (url,),
+        ).fetchone()
+        if row:
+            conn.execute(
+                '''UPDATE history SET title = COALESCE(?, title), thumbnail = COALESCE(?, thumbnail),
+                   duration = COALESCE(?, duration), site = COALESCE(?, site),
+                   format_id = COALESCE(?, format_id), position = COALESCE(?, position),
+                   played_at = COALESCE(?, played_at)
+                   WHERE id = ?''',
+                (
+                    item.get('title'),
+                    item.get('thumbnail'),
+                    item.get('duration'),
+                    item.get('site'),
+                    item.get('format_id'),
+                    item.get('position'),
+                    item.get('played_at'),
+                    row['id'],
+                ),
+            )
+        else:
+            conn.execute(
+                '''INSERT INTO history (url, title, thumbnail, duration, site, format_id, position, played_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))''',
+                (
+                    url,
+                    item.get('title'),
+                    item.get('thumbnail'),
+                    item.get('duration') or 0,
+                    item.get('site'),
+                    item.get('format_id'),
+                    item.get('position') or 0,
+                    item.get('played_at'),
+                ),
+            )
+
+    for item in req.favorites:
+        url = (item.get('url') or '').strip()
+        if not url:
+            continue
+        try:
+            conn.execute(
+                'INSERT INTO favorites (url, title, thumbnail, site, added_at) VALUES (?, ?, ?, ?, COALESCE(?, datetime(\'now\')))',
+                (url, item.get('title'), item.get('thumbnail'), item.get('site'), item.get('added_at')),
+            )
+        except Exception:
+            pass
+
+    conn.commit()
+    history = conn.execute('SELECT * FROM history ORDER BY played_at DESC LIMIT 300').fetchall()
+    favorites = conn.execute('SELECT * FROM favorites ORDER BY added_at DESC').fetchall()
+    conn.close()
+    return {
+        'history': [row_to_dict(r) for r in history],
+        'favorites': [row_to_dict(r) for r in favorites],
+    }
 
 
 @app.get('/api/playlists')
