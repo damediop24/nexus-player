@@ -1252,8 +1252,15 @@ async function playUrl(url, formatId = null, resumePos = 0) {
     });
 
     if (info.type === 'playlist') {
-      toast(`Queued ${info.queued} items from playlist`);
+      const count = info.queued || info.entries?.length || 0;
+      toast(`Queued ${count} items — starting first video…`);
       await refreshQueue();
+      const first = info.entries?.[0];
+      if (first?.url) {
+        queueIndex = 0;
+        await playUrl(first.url, first.format_id, resumePos);
+        return;
+      }
       if (queue.length) {
         queueIndex = 0;
         await playQueueItem(0);

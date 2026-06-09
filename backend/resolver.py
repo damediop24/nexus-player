@@ -74,9 +74,18 @@ def _is_youtube_url(url):
     return _host_key(urlparse(url).netloc) in _YOUTUBE_HOSTS
 
 
-def _is_erome_url(url):
+def _is_erome_host(url):
     host = _host_key(urlparse(url).netloc)
     return host == 'erome.com' or host.endswith('.erome.com')
+
+
+def _is_erome_page_url(url):
+    if not _is_erome_host(url):
+        return False
+    host = _host_key(urlparse(url).netloc)
+    if re.match(r'^v\d+\.', host):
+        return False
+    return True
 
 
 def normalize_play_url(url):
@@ -1111,7 +1120,11 @@ def resolve_url(url, format_id=None):
         except Exception as exc:
             raise _classify_resolve_error(exc, url) from exc
 
-    if _is_erome_url(url):
+    if _is_direct_media(url):
+        probe = _probe_direct_url(url) if _is_erome_host(url) else None
+        return _direct_media_response(url, probe)
+
+    if _is_erome_page_url(url):
         try:
             return _resolve_erome(url)
         except ResolveError:
@@ -1119,9 +1132,6 @@ def resolve_url(url, format_id=None):
         except Exception as exc:
             if not _is_retriable(exc):
                 raise _classify_resolve_error(exc, url) from exc
-
-    if _is_direct_media(url):
-        return _direct_media_response(url)
 
     if _looks_like_cdn_download(url):
         probe = _probe_direct_url(url)
