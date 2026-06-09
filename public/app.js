@@ -38,6 +38,8 @@ let hls = null;
 let dashPlayer = null;
 let currentMedia = null;
 let fitMode = localStorage.getItem('nexus-fit-mode') || 'contain';
+const FOCUS_KEY = 'nexus-video-focus';
+let videoFocusMode = localStorage.getItem(FOCUS_KEY) === '1';
 const LIBRARY_KEY = 'nexus-library-v1';
 let prefetchController = null;
 let prefetchBlobUrl = null;
@@ -1315,6 +1317,8 @@ progressHitarea.addEventListener('touchend', (e) => {
 
 /* ── Controls ── */
 $('#play-btn').addEventListener('click', () => playUrl(urlInput.value.trim()));
+$('#focus-btn')?.addEventListener('click', toggleVideoFocus);
+$('#focus-exit-btn')?.addEventListener('click', toggleVideoFocus);
 $('#torrent-add-btn').addEventListener('click', () => {
   const v = urlInput.value.trim();
   if (isMagnet(v)) addMagnet(v);
@@ -1856,6 +1860,23 @@ function isMobileLayout() {
   return window.matchMedia('(max-width: 768px)').matches;
 }
 
+function setVideoFocus(on) {
+  videoFocusMode = !!on;
+  const app = $('.app');
+  app?.classList.toggle('video-focus-mode', videoFocusMode);
+  const focusBtn = $('#focus-btn');
+  focusBtn?.classList.toggle('active', videoFocusMode);
+  focusBtn?.setAttribute('aria-pressed', String(videoFocusMode));
+  const exitBtn = $('#focus-exit-btn');
+  if (exitBtn) exitBtn.hidden = !videoFocusMode;
+  localStorage.setItem(FOCUS_KEY, videoFocusMode ? '1' : '0');
+  if (videoFocusMode) setSidebarOpen(false);
+}
+
+function toggleVideoFocus() {
+  setVideoFocus(!videoFocusMode);
+}
+
 function setSidebarOpen(open) {
   const sidebar = $('#sidebar');
   const backdrop = $('#sidebar-backdrop');
@@ -2059,6 +2080,10 @@ document.addEventListener('keydown', (e) => {
     case 'ArrowUp': setVolume(Math.min(200, +$('#volume-slider').value + 5)); $('#volume-slider').value = Math.min(200, +$('#volume-slider').value + 5); break;
     case 'ArrowDown': setVolume(Math.max(0, +$('#volume-slider').value - 5)); $('#volume-slider').value = Math.max(0, +$('#volume-slider').value - 5); break;
     case 'f': case 'F': $('#fs-btn').click(); break;
+    case 'c': case 'C': skip(); toggleVideoFocus(); break;
+    case 'Escape':
+      if (videoFocusMode) { skip(); setVideoFocus(false); }
+      break;
     case 'v': case 'V': cycleFitMode(); break;
     case 'm': case 'M': $('#mute-btn').click(); break;
     case 'n': case 'N': playNext(); break;
@@ -2084,6 +2109,7 @@ $('#player-wrap').addEventListener('mousemove', () => {
 });
 
 /* Init */
+if (videoFocusMode) setVideoFocus(true);
 setFitMode(fitMode);
 setPlayPauseIcon(false);
 setMuteIcon(false);

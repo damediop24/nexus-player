@@ -26,6 +26,10 @@
       <div class="search-bar">
         <input id="url-input" type="url" inputmode="url" placeholder="Paste URL or magnet link…" spellcheck="false" autocomplete="off" />
         <button id="play-btn" class="btn-primary" type="button">Play</button>
+        <button id="focus-btn" class="icon-btn focus-toggle" type="button" title="Focus on video" aria-label="Focus on video" aria-pressed="false">
+          <svg class="ico-focus-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h4V5H3v6h2V7zm10 0v4h2V5h-6v2h4zM7 17v-4H5v6h6v-2H7zm10 0h-4v2h6v-6h-2v4z" fill="currentColor"/></svg>
+          <svg class="ico-focus-off" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M4 6h16v12H4V6zm2 2v8h12V8H6z" fill="currentColor"/></svg>
+        </button>
       </div>
       <button id="player-menu-btn" class="icon-btn" type="button" title="Options" aria-label="Player options">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg>
@@ -61,6 +65,10 @@
           </div>
 
           <div class="seek-preview" id="seek-preview"><span id="seek-preview-time">0:00</span></div>
+
+          <button id="focus-exit-btn" class="focus-exit-btn" type="button" title="Show controls" aria-label="Exit focus mode" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4V6zm2 2v8h12V8H6z" fill="currentColor"/></svg>
+          </button>
 
           <div class="player-ui" id="controls">
             <div class="ui-progress" id="progress-wrap">

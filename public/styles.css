@@ -130,6 +130,21 @@ button, input, select, textarea {
 .btn-primary:hover { filter: brightness(1.08); }
 .btn-primary:active { transform: scale(0.97); }
 
+.focus-toggle {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.focus-toggle:hover { color: var(--text); background: var(--surface-3); }
+.focus-toggle.active { color: var(--accent); background: var(--accent-soft); }
+.focus-toggle .ico-focus-off[hidden] { display: none; }
+.focus-toggle.active .ico-focus-on { display: none; }
+.focus-toggle.active .ico-focus-off { display: block; }
+.focus-toggle.active .ico-focus-off[hidden] { display: block; }
+
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -941,6 +956,56 @@ dialog textarea { margin: 0 1rem; width: calc(100% - 2rem); resize: vertical; }
 }
 
 [hidden] { display: none !important; }
+
+/* ── Video focus mode ── */
+.app.video-focus-mode .shell-header,
+.app.video-focus-mode .info-strip,
+.app.video-focus-mode .library,
+.app.video-focus-mode .sidebar-backdrop {
+  display: none !important;
+}
+
+.app.video-focus-mode .shell-body,
+.app.video-focus-mode .theater,
+.app.video-focus-mode .player {
+  flex: 1;
+  min-height: 0;
+}
+
+.app.video-focus-mode .player-ui,
+.app.video-focus-mode .fs-fit-bar,
+.app.video-focus-mode .player-overlay,
+.app.video-focus-mode .seek-preview {
+  display: none !important;
+}
+
+.focus-exit-btn {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  z-index: 35;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: rgba(9, 9, 11, 0.72);
+  color: var(--text);
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  opacity: 0.55;
+  transition: opacity 0.2s, background 0.15s;
+}
+
+.focus-exit-btn svg { width: 18px; height: 18px; }
+.focus-exit-btn:hover,
+.focus-exit-btn:focus-visible { opacity: 1; background: rgba(24, 24, 28, 0.92); }
+
+.app.video-focus-mode .focus-exit-btn:not([hidden]) {
+  display: inline-flex;
+}
 
 /* ── Mobile ── */
 @media (max-width: 768px) {
