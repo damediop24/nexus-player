@@ -138,6 +138,47 @@ winget install Gyan.FFmpeg
 winget install shinchiro.mpv
 ```
 
+## Deploy Online (public URL)
+
+GitHub hosts the **code**, not a running player. To get a public URL like `https://nexus-player.onrender.com`, deploy to a cloud host.
+
+### Option A — Render (free, easiest)
+
+1. Go to [render.com](https://render.com) and sign up with GitHub
+2. **New +** → **Blueprint** (or **Web Service**)
+3. Connect repo: `damediop24/nexus-player`
+4. Render detects `render.yaml` and `Dockerfile` automatically
+5. Click **Deploy** — wait ~5 minutes
+6. Your player URL will be shown, e.g. `https://nexus-player.onrender.com`
+
+> Free tier sleeps after 15 min idle — first visit may take ~30s to wake up.
+
+### Option B — Railway
+
+1. Go to [railway.app](https://railway.app) and sign up with GitHub
+2. **New Project** → **Deploy from GitHub repo** → select `nexus-player`
+3. Railway uses the included `Dockerfile`
+4. Open **Settings** → **Networking** → **Generate Domain**
+5. Use that URL (e.g. `https://nexus-player-production.up.railway.app`)
+
+### Option C — Fly.io
+
+```bash
+fly launch --from nexus-player
+fly deploy
+fly open
+```
+
+### Cloud limitations
+
+| Feature | Local | Cloud |
+|---------|-------|-------|
+| Play streams | ✅ | ✅ (most sites) |
+| MPV button | ✅ | ❌ (no desktop app) |
+| Browser cookies (403 fix) | ✅ | ❌ |
+| Downloads saved | ✅ | Limited (ephemeral disk) |
+| Bandwidth | Your ISP | Host limits apply |
+
 ## Troubleshooting
 
 | Issue | Fix |
