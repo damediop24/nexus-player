@@ -200,6 +200,11 @@ function loadSource(url, type = 'progressive') {
   } else {
     video.src = url;
     video.addEventListener('canplay', () => tryPlay(), { once: true });
+    video.addEventListener('loadedmetadata', () => {
+      if (video.duration > 0 && video.duration < 1 && video.seekable.length) {
+        toast('Stream looks invalid — try MPV or replay the magnet', 6000);
+      }
+    }, { once: true });
   }
 }
 
@@ -259,7 +264,7 @@ function renderCloudStatus(task) {
   if (task.file_size) parts.push(fmtSize(task.file_size));
   if (task.download_rate) parts.push(`↓ ${fmtSpeed(task.download_rate)}`);
   if (task.phase === 'complete') parts.push('streaming from cloud');
-  if (task.error) parts.push(task.error);
+  if (task.error && task.phase !== 'complete') parts.push(task.error);
   cloudStatusText.textContent = parts.filter(Boolean).join(' · ');
   cloudProgressBar.style.width = `${Math.min(100, task.progress || 0)}%`;
 }

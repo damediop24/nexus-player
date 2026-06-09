@@ -20,7 +20,7 @@ from db import get_conn, get_settings, init_db, row_to_dict, set_setting
 from resolver import DOWNLOADS, HAS_CURL_CFFI, _ffmpeg_path, download_media, find_mpv, launch_mpv, resolve_url
 from streams import create_token, get_token
 from torrent import HAS_LIBTORRENT, get_manager, is_magnet, is_torrent_bytes, normalize_url, parse_range_header
-from pikpak import HAS_PIKPAK, configure as pikpak_configure, get_status as pikpak_status, is_configured as pikpak_ready, list_tasks as pikpak_list_tasks, resolve_via_pikpak, set_enabled as pikpak_set_enabled, test_login as pikpak_test_login, torrent_bytes_to_magnet
+from pikpak import HAS_PIKPAK, configure as pikpak_configure, get_fresh_stream, get_status as pikpak_status, is_configured as pikpak_ready, list_tasks as pikpak_list_tasks, resolve_via_pikpak, set_enabled as pikpak_set_enabled, test_login as pikpak_test_login, torrent_bytes_to_magnet
 
 ROOT = Path(__file__).parent.parent
 PUBLIC = ROOT / 'public'
@@ -128,7 +128,9 @@ def _lan_ip():
 
 
 def _make_play_response(info: dict, source_url: str):
-    if info.get('play_url'):
+    if info.get('pikpak_file_id'):
+        play_url = f'/api/pikpak/stream/{info["pikpak_file_id"]}'
+    elif info.get('play_url'):
         play_url = info['play_url']
     elif info.get('stream_url', '').startswith('/api/'):
         play_url = info['stream_url']
@@ -184,7 +186,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.2.1',
+        'version': '2.2.2',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -588,6 +590,100 @@ def api_pikpak_configure(req: PikPakConfigRequest):
 def api_pikpak_enable(req: PikPakEnableRequest):
     pikpak_set_enabled(req.enabled)
     return {'ok': True, **pikpak_status()}
+
+
+@app.get('/api/pikpak/stream/{file_id}')
+@app.head('/api/pikpak/stream/{file_id}')
+async def api_pikpak_stream(file_id: str, request: Request):
+    if not pikpak_ready():
+        raise HTTPException(400, 'PikPak not configured')
+
+    refresh = request.query_params.get('refresh') == '1'
+    try:
+        entry = get_fresh_stream(file_id, refresh=refresh)
+    except Exception as e:
+        raise HTTPException(502, f'PikPak stream: {e}')
+
+    headers = dict(entry.get('headers') or {})
+    range_header = request.headers.get('range')
+    if range_header:
+        headers['Range'] = range_header
+
+    client = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(120.0, read=120.0))
+
+    async def proxy_upstream(stream_info: dict, retry: bool = True):
+        upstream = await client.send(
+            client.build_request('GET', stream_info['stream_url'], headers=headers),
+            stream=True,
+        )
+        if upstream.status_code in (401, 403, 404) and retry:
+            await upstream.aclose()
+            stream_info = get_fresh_stream(file_id, refresh=True)
+            return await proxy_upstream(stream_info, retry=False)
+        return upstream, stream_info
+
+    try:
+        upstream, entry = await proxy_upstream(entry)
+
+        out_headers = {
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges, Content-Type',
+        }
+        for key in ('content-type', 'content-length', 'content-range'):
+            if key in upstream.headers:
+                out_headers[key] = upstream.headers[key]
+
+        media_type = upstream.headers.get('content-type') or entry.get('content_type') or 'video/mp4'
+        base_mime = media_type.split(';')[0].strip().lower()
+        if base_mime in {'binary/octet-stream', 'application/octet-stream', 'application/json', 'text/plain'}:
+            media_type = entry.get('content_type') or 'video/mp4'
+            out_headers['content-type'] = media_type
+
+        if upstream.status_code >= 400:
+            body = await upstream.aread()
+            await upstream.aclose()
+            await client.aclose()
+            snippet = body[:200].decode('utf-8', errors='replace')
+            raise HTTPException(upstream.status_code, f'PikPak CDN error: {snippet}')
+
+        if not range_header:
+            content_length = upstream.headers.get('content-length')
+            try:
+                if content_length and int(content_length) < 4096:
+                    body = await upstream.aread()
+                    await upstream.aclose()
+                    await client.aclose()
+                    snippet = body[:200].decode('utf-8', errors='replace')
+                    raise HTTPException(502, f'PikPak returned invalid stream ({content_length} bytes): {snippet}')
+            except ValueError:
+                pass
+
+        if request.method == 'HEAD':
+            await upstream.aclose()
+            await client.aclose()
+            from starlette.responses import Response
+            return Response(status_code=upstream.status_code, headers=out_headers)
+
+        async def stream():
+            try:
+                async for chunk in upstream.aiter_bytes(65536):
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            stream(),
+            status_code=upstream.status_code,
+            media_type=media_type,
+            headers=out_headers,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await client.aclose()
+        raise HTTPException(502, f'PikPak stream error: {exc}')
 
 
 @app.get('/api/pikpak/tasks')

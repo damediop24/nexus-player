@@ -10,6 +10,7 @@ HAS_PIKPAK = bool(importlib.util.find_spec('pikpakapi'))
 
 _client = None
 _active_jobs: dict[str, dict] = {}
+_stream_url_cache: dict[str, dict] = {}
 
 
 def _run(coro):
@@ -116,12 +117,60 @@ def test_login(username: str, password: str) -> dict:
 
 def _extract_stream_url(file_data: dict) -> Optional[str]:
     medias = file_data.get('medias') or []
+    candidates = []
     for media in medias:
         link = media.get('link') or {}
         url = link.get('url')
         if url:
-            return url
+            priority = int(media.get('priority') or 0)
+            candidates.append((priority, url))
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
     return file_data.get('web_content_link')
+
+
+def _content_type_for_name(name: str) -> str:
+    ext = name.lower().rsplit('.', 1)[-1] if '.' in name.lower() else 'mp4'
+    mime = {
+        'mp4': 'video/mp4', 'm4v': 'video/mp4', 'mkv': 'video/x-matroska',
+        'webm': 'video/webm', 'avi': 'video/x-msvideo', 'mov': 'video/quicktime',
+    }
+    return mime.get(ext, 'video/mp4')
+
+
+async def _fresh_stream_async(file_id: str, refresh: bool = False) -> dict:
+    if not refresh:
+        cached = _stream_url_cache.get(file_id)
+        if cached and cached.get('expires', 0) > time.time():
+            return cached
+
+    client = await _get_client()
+    info = await client.get_download_url(file_id)
+    stream_url = _extract_stream_url(info)
+    if not stream_url:
+        raise RuntimeError('PikPak stream URL not available')
+
+    title = info.get('name') or 'PikPak stream'
+    result = {
+        'stream_url': stream_url,
+        'content_type': _content_type_for_name(title),
+        'title': title,
+        'size': int(info.get('size') or 0),
+        'headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://mypikpak.com/',
+            'Accept': '*/*',
+        },
+        'expires': time.time() + 300,
+    }
+    _stream_url_cache[file_id] = result
+    return result
+
+
+def get_fresh_stream(file_id: str, refresh: bool = False) -> dict:
+    if not is_configured():
+        raise RuntimeError('PikPak not configured')
+    return _run(_fresh_stream_async(file_id, refresh=refresh))
 
 
 def _phase_label(phase: str) -> str:
@@ -345,14 +394,7 @@ def resolve_via_pikpak(source: str, label: str = 'PikPak torrent') -> dict:
         raise RuntimeError('PikPak not configured')
     global _client
     _client = None
-    info = _run(_resolve_async(source, label))
-    from resolver import _probe_direct_url, _direct_media_response
-
-    probe = _probe_direct_url(info['stream_url'])
-    if probe:
-        probe['title'] = info['title']
-        return _direct_media_response(info['stream_url'], probe)
-    return info
+    return _run(_resolve_async(source, label))
 
 
 def torrent_bytes_to_magnet(data: bytes) -> str:
