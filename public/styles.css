@@ -789,7 +789,28 @@ button, input, select, textarea {
 
 .status-pill.ok { color: var(--success); }
 
-.torrent-list { list-style: none; padding: 0 0.5rem; overflow-y: auto; flex: 1; }
+#panel-torrent {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.torrent-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.65rem;
+  padding: 0.45rem 0.65rem 0.15rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.torrent-summary-stat.playing {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.torrent-list { list-style: none; padding: 0 0.5rem; overflow-y: auto; flex: 1; min-height: 0; }
 
 .torrent-card {
   padding: 0.65rem 0.7rem;
@@ -799,7 +820,53 @@ button, input, select, textarea {
   background: var(--surface-2);
 }
 
+.torrent-card.playing {
+  border-color: rgba(52, 211, 153, 0.45);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.12);
+}
+
 .torrent-card.cloud { border-color: rgba(99, 102, 241, 0.25); }
+.torrent-card.cloud.playing { border-color: rgba(52, 211, 153, 0.45); }
+
+.torrent-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+}
+
+.torrent-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.4rem;
+  border-radius: 99px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.torrent-badge.seeding { color: var(--success); background: rgba(52, 211, 153, 0.12); }
+.torrent-badge.downloading { color: var(--accent); background: var(--accent-soft); }
+.torrent-badge.buffering { color: var(--warn); background: rgba(251, 191, 36, 0.12); }
+.torrent-badge.playing { color: var(--success); background: rgba(52, 211, 153, 0.18); }
+.torrent-badge.ready { color: var(--success); background: rgba(52, 211, 153, 0.12); }
+.torrent-badge.error { color: var(--danger); background: rgba(248, 113, 113, 0.12); }
+.torrent-badge.queued { color: var(--muted); }
+
+.torrent-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.2rem 0.5rem;
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.torrent-stats strong { color: var(--text); font-weight: 600; }
 
 .torrent-card-header {
   display: flex;
@@ -827,6 +894,7 @@ button, input, select, textarea {
 
 .torrent-file:hover { background: var(--surface); }
 .torrent-file.playable { color: var(--accent); }
+.torrent-file.playing { color: var(--success); font-weight: 600; }
 .torrent-file-size { color: var(--muted); flex-shrink: 0; }
 
 .torrent-file-btn { cursor: pointer; }

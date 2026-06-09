@@ -160,6 +160,7 @@
           <button class="tab" data-tab="playlists" type="button">Lists</button>
           <button class="tab" data-tab="downloads" type="button">Files</button>
           <button class="tab" data-tab="library" type="button">Sync</button>
+          <button class="tab" data-tab="torrent" type="button">Torrent</button>
           <button class="tab" data-tab="torrents" type="button">Cloud</button>
         </nav>
 
@@ -194,6 +195,18 @@
           </div>
           <ul class="item-list" id="library-list"></ul>
         </div>
+        <div class="tab-panel" id="panel-torrent">
+          <div class="torrent-summary" id="torrent-summary">
+            <span class="torrent-summary-stat" id="torrent-summary-count">0 active</span>
+            <span class="torrent-summary-stat playing hidden" id="torrent-summary-playing">▶ Playing</span>
+          </div>
+          <div class="panel-actions">
+            <button class="chip-btn" id="torrent-paste-btn" type="button">Magnet</button>
+            <label class="chip-btn ghost torrent-file-btn">Torrent<input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden /></label>
+            <button class="chip-btn ghost" id="refresh-torrents-btn" type="button">Refresh</button>
+          </div>
+          <ul class="torrent-list" id="torrent-list"></ul>
+        </div>
         <div class="tab-panel" id="panel-torrents">
           <div class="settings-card" id="alldebrid-box">
             <h3>AllDebrid</h3>
@@ -210,12 +223,6 @@
             </div>
             <div class="status-pill" id="mpv-bridge-status">Bridge offline</div>
           </div>
-          <div class="panel-actions">
-            <button class="chip-btn" id="torrent-paste-btn" type="button">Magnet</button>
-            <label class="chip-btn ghost torrent-file-btn">Torrent<input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden /></label>
-            <button class="chip-btn ghost" id="refresh-torrents-btn" type="button">Refresh</button>
-          </div>
-          <ul class="torrent-list" id="torrent-list"></ul>
         </div>
 
         <footer class="library-foot">
