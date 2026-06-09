@@ -282,6 +282,14 @@ _CDN_DOWNLOAD_HOSTS = (
     'mypikpak.com',
     'pikpak.com',
     'pikpakdrive.com',
+    'debrid.it',
+    'alldebrid.com',
+    'real-debrid.com',
+)
+
+_STREMIO_RESOLVER_MARKERS = (
+    'torrentio.strem.fun',
+    'strem.fun',
 )
 
 _EXT_FROM_MIME = {
@@ -320,7 +328,89 @@ _MIME_FROM_EXT = {
 }
 
 
+def _is_stremio_resolver(url):
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    if '/resolve/' not in path:
+        return False
+    return any(marker in host for marker in _STREMIO_RESOLVER_MARKERS) or host.endswith('.strem.fun')
+
+
+def _title_from_stremio_url(url):
+    from urllib.parse import unquote
+
+    for part in reversed(urlparse(url).path.split('/')):
+        if not part:
+            continue
+        decoded = unquote(part)
+        lower = decoded.lower()
+        if any(lower.endswith(ext) for ext in _MEDIA_EXTENSIONS):
+            return decoded
+    return 'Stremio stream'
+
+
+def _resolve_stremio_url(url):
+    headers = {
+        'User-Agent': BROWSER_UA,
+        'Accept': '*/*',
+    }
+
+    try:
+        with httpx.Client(follow_redirects=False, timeout=httpx.Timeout(120.0, connect=30.0)) as client:
+            resp = client.get(url, headers=headers)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get('location')
+                if not location:
+                    return None
+                if location.startswith('/'):
+                    parsed = urlparse(url)
+                    location = f'{parsed.scheme}://{parsed.netloc}{location}'
+                return location
+            if resp.status_code in (200, 206):
+                return str(resp.url)
+    except Exception:
+        return None
+    return None
+
+
+def _resolve_stremio_stream(url):
+    final_url = _resolve_stremio_url(url)
+    if not final_url:
+        raise RuntimeError(
+            'Stremio resolver failed. The link may be expired or the debrid service is unavailable.'
+        )
+
+    title = _title_from_stremio_url(url)
+    probe = _probe_direct_url(final_url)
+    if not probe:
+        path_lower = final_url.lower().split('?')[0]
+        ext = path_lower.rsplit('.', 1)[-1] if '.' in path_lower else 'mp4'
+        probe = {
+            'ext': ext,
+            'stream_type': 'progressive',
+            'title': title,
+            'filesize': None,
+            'content_type': _MIME_FROM_EXT.get(ext, 'video/mp4'),
+            'headers': {
+                'User-Agent': BROWSER_UA,
+                'Referer': _referer_for_url(final_url),
+                'Accept': '*/*',
+            },
+        }
+    else:
+        probe['title'] = title
+
+    result = _direct_media_response(final_url, probe)
+    result['site'] = 'stremio'
+    result['url'] = url
+    result['title'] = title
+    return result
+
+
 def _is_direct_media(url):
+    if _is_stremio_resolver(url):
+        return False
     lower = url.lower().split('?')[0]
     return lower.endswith(_MEDIA_EXTENSIONS)
 
@@ -530,6 +620,9 @@ def _cdn_download_fallback(url):
 
 
 def resolve_url(url, format_id=None):
+    if _is_stremio_resolver(url):
+        return _resolve_stremio_stream(url)
+
     if _is_direct_media(url):
         return _direct_media_response(url)
 
