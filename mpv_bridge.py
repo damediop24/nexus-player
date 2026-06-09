@@ -46,21 +46,60 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _resolve_page(self, url: str):
+        root = Path(__file__).parent
+        backend = root / 'backend'
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        if str(backend) not in sys.path:
+            sys.path.insert(0, str(backend))
+        from resolver import resolve_url
+
+        result = resolve_url(url)
+        stream_url = result.get('stream_url')
+        if not stream_url:
+            raise RuntimeError('No stream URL found for this page')
+        return {
+            'ok': True,
+            'source_url': url,
+            'stream_url': stream_url,
+            'title': result.get('title'),
+            'thumbnail': result.get('thumbnail'),
+            'duration': result.get('duration'),
+            'site': result.get('site'),
+            'headers': result.get('headers') or {},
+            'stream_type': result.get('stream_type', 'progressive'),
+            'content_type': result.get('content_type'),
+            'resolved_with': result.get('resolved_with', 'local-bridge'),
+        }
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == '/health':
-            self._json({'ok': True, 'port': PORT, 'mpv': DEFAULT_MPV})
+            self._json({'ok': True, 'port': PORT, 'mpv': DEFAULT_MPV, 'resolve': True})
+            return
+        if parsed.path == '/resolve':
+            params = urllib.parse.parse_qs(parsed.query)
+            url = (params.get('url') or [''])[0]
+            if not url:
+                self._json({'error': 'missing url parameter'}, 400)
+                return
+            try:
+                self._json(self._resolve_page(url))
+            except Exception as exc:
+                self._json({'error': str(exc)}, 500)
             return
         if parsed.path in ('/launch', '/launch-form'):
             params = urllib.parse.parse_qs(parsed.query)
             url = (params.get('url') or [''])[0]
             mpv = urllib.parse.unquote((params.get('mpv') or [DEFAULT_MPV])[0])
             title = urllib.parse.unquote((params.get('title') or ['Nexus Player'])[0])
+            referer = urllib.parse.unquote((params.get('referer') or [''])[0])
             if not url:
                 self._html('Missing url parameter', 400)
                 return
             try:
-                self._exec_launch(url, mpv, title)
+                self._exec_launch(url, mpv, title, referer or None)
                 self._html(
                     '<!doctype html><html><head><meta charset="utf-8"><title>MPV</title></head>'
                     '<body style="font-family:sans-serif;padding:1rem">'
@@ -74,6 +113,23 @@ class Handler(BaseHTTPRequestHandler):
         self._html('<p>Nexus MPV Bridge is running.</p>', 200)
 
     def do_POST(self):
+        if self.path == '/resolve':
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length) if length else b'{}'
+            try:
+                data = json.loads(raw.decode('utf-8'))
+            except json.JSONDecodeError:
+                self._json({'error': 'invalid json'}, 400)
+                return
+            url = data.get('url', '')
+            if not url:
+                self._json({'error': 'missing url'}, 400)
+                return
+            try:
+                self._json(self._resolve_page(url))
+            except Exception as exc:
+                self._json({'error': str(exc)}, 500)
+            return
         if self.path not in ('/launch', '/launch-form'):
             self._json({'error': 'not found'}, 404)
             return
@@ -92,11 +148,12 @@ class Handler(BaseHTTPRequestHandler):
         url = data.get('url', '')
         mpv = data.get('mpv_path') or data.get('mpv') or DEFAULT_MPV
         title = data.get('title') or 'Nexus Player'
+        referer = data.get('referer') or ''
         if not url:
             self._json({'error': 'missing url'}, 400)
             return
         try:
-            self._exec_launch(url, mpv, title)
+            self._exec_launch(url, mpv, title, referer or None)
             if self.path == '/launch-form' or 'application/x-www-form-urlencoded' in content_type:
                 self._html(
                     '<!doctype html><html><head><meta charset="utf-8"><title>MPV</title></head>'
@@ -111,10 +168,13 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json({'error': str(exc)}, 500)
 
-    def _exec_launch(self, url: str, mpv: str, title: str):
+    def _exec_launch(self, url: str, mpv: str, title: str, referer=None):
         if not os.path.isfile(mpv):
             raise FileNotFoundError(mpv)
-        args = [mpv, '--force-window=immediate', f'--title={title}', url]
+        args = [mpv, '--force-window=immediate', f'--title={title}']
+        if referer:
+            args.append(f'--referrer={referer}')
+        args.append(url)
         subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _json(self, data, code=200):
@@ -147,7 +207,7 @@ def main():
     httpd = ThreadingHTTPServer((host, PORT), Handler)
     print(f'Nexus MPV bridge on http://{host}:{PORT}')
     print(f'MPV: {mpv}')
-    print('Keep this running — the MPV button in Nexus Player will launch MPV directly.')
+    print('Keep this running — MPV launch and local resolve for blocked sites use this bridge.')
     httpd.serve_forever()
 
 

@@ -58,6 +58,19 @@ class PlayRequest(BaseModel):
         return normalize_url(value) if value else value
 
 
+class LocalPlayRequest(BaseModel):
+    source_url: str
+    stream_url: str
+    title: Optional[str] = None
+    thumbnail: Optional[str] = None
+    duration: Optional[float] = None
+    site: Optional[str] = None
+    headers: Optional[dict] = None
+    stream_type: str = 'progressive'
+    content_type: Optional[str] = None
+    resolved_with: str = 'local-bridge'
+
+
 class ProgressRequest(BaseModel):
     url: str
     position: float
@@ -193,7 +206,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.3.6',
+        'version': '2.3.7',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -230,6 +243,38 @@ def api_play(req: PlayRequest):
             return {'type': 'playlist', 'queued': len(info.get('entries', [])), 'entries': info.get('entries')}
 
         return _make_play_response(info, req.url)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post('/api/play/local')
+def api_play_local(req: LocalPlayRequest):
+    try:
+        info = {
+            'type': 'video',
+            'title': req.title or 'Video',
+            'url': req.source_url,
+            'thumbnail': req.thumbnail,
+            'duration': req.duration,
+            'site': req.site,
+            'stream_url': req.stream_url,
+            'stream_type': req.stream_type,
+            'content_type': req.content_type,
+            'headers': req.headers or {},
+            'resolved_with': req.resolved_with,
+            'formats': [{
+                'format_id': 'direct',
+                'ext': req.stream_type if req.stream_type != 'progressive' else 'mp4',
+                'quality': 'direct',
+                'resolution': 'source',
+                'url': req.stream_url,
+            }],
+            'best_format_id': 'direct',
+            'subtitles': [],
+        }
+        return _make_play_response(info, req.source_url)
     except HTTPException:
         raise
     except Exception as e:

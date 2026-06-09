@@ -842,6 +842,60 @@ function startTorrentPolling() {
   }, 3000);
 }
 
+function isBlockedSiteError(msg) {
+  return /403|forbidden|blocked this server|cloud servers/i.test(msg || '');
+}
+
+async function resolveViaLocalBridge(url) {
+  const bridge = `http://127.0.0.1:${MPV_BRIDGE_PORT}/resolve?url=${encodeURIComponent(url)}`;
+  const res = await fetch(bridge, { signal: AbortSignal.timeout(30000) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || 'Local resolve failed');
+  return data;
+}
+
+function applyPlayback(info, resumePos = 0) {
+  currentMedia = info;
+  overlay.classList.add('hidden');
+  setMeta(info);
+  populateFormats(info.formats || [], info.best_format_id);
+  populateSubtitles(info.subtitles || []);
+  loadSource(info.play_url, info.stream_type);
+
+  const seekTo = () => {
+    if (resumePos > 0 && getDuration()) video.currentTime = resumePos;
+  };
+  video.addEventListener('loadedmetadata', seekTo, { once: true });
+  video.addEventListener('durationchange', seekTo, { once: true });
+
+  recordPlayback(info);
+  toast('Playing: ' + (info.title || 'media'));
+  wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
+  if (isPikpakMedia(info)) updateCloudStatus();
+}
+
+async function playViaLocalBridge(url, formatId = null, resumePos = 0) {
+  toast('Cloud blocked — resolving on your PC...', 8000);
+  const resolved = await resolveViaLocalBridge(url);
+  const info = await api('/api/play/local', {
+    method: 'POST',
+    body: JSON.stringify({
+      source_url: url,
+      stream_url: resolved.stream_url,
+      title: resolved.title,
+      thumbnail: resolved.thumbnail,
+      duration: resolved.duration,
+      site: resolved.site,
+      headers: resolved.headers,
+      stream_type: resolved.stream_type || 'progressive',
+      content_type: resolved.content_type,
+      resolved_with: resolved.resolved_with || 'local-bridge',
+    }),
+  });
+  applyPlayback(info, resumePos);
+  toast('Playing via local bridge: ' + (info.title || 'media'), 5000);
+}
+
 async function playUrl(url, formatId = null, resumePos = 0) {
   if (!url) return;
   const pikpakMagnet = isMagnet(url) && appStatus?.pikpak?.configured;
@@ -872,29 +926,20 @@ async function playUrl(url, formatId = null, resumePos = 0) {
       return;
     }
 
-    currentMedia = info;
-    overlay.classList.add('hidden');
-    setMeta(info);
-    populateFormats(info.formats || [], info.best_format_id);
-    populateSubtitles(info.subtitles || []);
-    loadSource(info.play_url, info.stream_type);
-
-    const seekTo = () => {
-      if (resumePos > 0 && getDuration()) video.currentTime = resumePos;
-    };
-    video.addEventListener('loadedmetadata', seekTo, { once: true });
-    video.addEventListener('durationchange', seekTo, { once: true });
-
-    recordPlayback(info);
-    toast('Playing: ' + (info.title || 'media'));
-    wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
-    if (isPikpakMedia(info)) updateCloudStatus();
+    applyPlayback(info, resumePos);
   } catch (e) {
     const msg = e.message || String(e);
-    toast('Error: ' + msg, 6000);
-    if (/403|forbidden|blocked/i.test(msg)) {
-      toast('Tip: Try the MPV button, or log into the site in Chrome/Edge first', 8000);
+    if (isBlockedSiteError(msg)) {
+      try {
+        await playViaLocalBridge(url, formatId, resumePos);
+        return;
+      } catch (localErr) {
+        toast('Local resolve failed — run start-mpv-bridge.vbs on your PC, then try again', 10000);
+        toast((localErr.message || localErr) + '', 8000);
+        return;
+      }
     }
+    toast('Error: ' + msg, 6000);
   } finally {
     cloudPollActive = isPikpakMedia(currentMedia);
   }
@@ -1271,14 +1316,17 @@ async function refreshMpvBridgeStatus() {
   if (!el) return;
   const onLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(window.location.origin);
   if (!onLocalhost) {
-    el.textContent = 'Run start-mpv-bridge.vbs on your PC, then click MPV';
+    el.textContent = 'Run start-mpv-bridge.vbs on your PC — needed for MPV and blocked sites';
     el.classList.remove('ok');
     return;
   }
   try {
     const res = await fetch(`http://127.0.0.1:${MPV_BRIDGE_PORT}/health`, { signal: AbortSignal.timeout(1200) });
     if (res.ok) {
-      el.textContent = 'MPV bridge running — MPV button launches directly';
+      const data = await res.json().catch(() => ({}));
+      el.textContent = data.resolve
+        ? 'Bridge running — MPV + local resolve for blocked sites'
+        : 'MPV bridge running — MPV button launches directly';
       el.classList.add('ok');
       return;
     }
@@ -1302,12 +1350,13 @@ async function copyText(text) {
   }
 }
 
-function buildMpvBridgeGetUrl(absUrl, title) {
+function buildMpvBridgeGetUrl(absUrl, title, referer = '') {
   const q = new URLSearchParams({
     url: absUrl,
     mpv: getMpvPath(),
     title: title || 'Nexus Player',
   });
+  if (referer) q.set('referer', referer);
   return `http://127.0.0.1:${MPV_BRIDGE_PORT}/launch?${q}`;
 }
 
@@ -1371,9 +1420,32 @@ function showMpvLaunchDialog(absUrl, title) {
   dialog?.showModal();
 }
 
+async function launchResolvedInMpv(absUrl, title, referer = '') {
+  if ($('#mpv-path')?.value) setMpvPath($('#mpv-path').value);
+  const bridgeUrl = buildMpvBridgeGetUrl(absUrl, title, referer);
+  const useForm = bridgeUrl.length > 5500 || absUrl.length > 1800;
+
+  if (!useForm) {
+    tryOpenUrl(bridgeUrl, 'nexusMpvBridge');
+  } else {
+    const page = new URL('/mpv-launch.html', window.location.origin);
+    page.searchParams.set('url', absUrl);
+    page.searchParams.set('mpv', getMpvPath());
+    page.searchParams.set('title', title || 'Nexus Player');
+    page.searchParams.set('port', MPV_BRIDGE_PORT);
+    if (referer) page.searchParams.set('referer', referer);
+    window.open(page.href, 'nexusMpvLaunch', 'width=440,height=180');
+  }
+
+  showMpvLaunchDialog(absUrl, title);
+  await copyText(absUrl);
+  toast('MPV launcher ready — click Launch MPV in the dialog if the player did not open.', 8000);
+}
+
 async function openInMpv() {
   let absUrl = '';
   let title = currentMedia?.title;
+  let referer = currentMedia?.headers?.Referer || currentMedia?.source_url || '';
 
   if (currentMedia?.play_url) {
     absUrl = toAbsoluteUrl(currentMedia.play_url);
@@ -1383,20 +1455,29 @@ async function openInMpv() {
       toast('Load a video first, then click MPV');
       return;
     }
-    const q = appStatus?.mpv_server ? '?server=true' : '';
-    const res = await api(`/api/mpv${q}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        url: source,
-        format_id: qualitySelect.value || null,
-      }),
-    });
-    if (res.mode === 'server') {
-      toast('Launched in MPV on this machine');
-      return;
+    try {
+      const q = appStatus?.mpv_server ? '?server=true' : '';
+      const res = await api(`/api/mpv${q}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          url: source,
+          format_id: qualitySelect.value || null,
+        }),
+      });
+      if (res.mode === 'server') {
+        toast('Launched in MPV on this machine');
+        return;
+      }
+      absUrl = res.play_url;
+      title = res.title || title;
+    } catch (e) {
+      if (!isBlockedSiteError(e.message)) throw e;
+      toast('Cloud blocked — resolving on your PC for MPV...', 8000);
+      const resolved = await resolveViaLocalBridge(source);
+      absUrl = resolved.stream_url;
+      title = resolved.title || title;
+      referer = resolved.headers?.Referer || source;
     }
-    absUrl = res.play_url;
-    title = res.title || title;
   }
 
   if (!absUrl) {
@@ -1404,20 +1485,7 @@ async function openInMpv() {
     return;
   }
 
-  if ($('#mpv-path')?.value) setMpvPath($('#mpv-path').value);
-
-  const bridgeUrl = buildMpvBridgeGetUrl(absUrl, title);
-  const useForm = bridgeUrl.length > 5500 || absUrl.length > 1800;
-
-  if (!useForm) {
-    tryOpenUrl(bridgeUrl, 'nexusMpvBridge');
-  } else {
-    launchMpvViaLaunchPage(absUrl, title);
-  }
-
-  showMpvLaunchDialog(absUrl, title);
-  await copyText(absUrl);
-  toast('MPV launcher ready — click Launch MPV in the dialog if the player did not open.', 8000);
+  await launchResolvedInMpv(absUrl, title, referer);
 }
 
 async function addToFavorites() {

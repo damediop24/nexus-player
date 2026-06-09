@@ -32,6 +32,7 @@
     const mpv = p.get('mpv') || 'C:\\mpv\\mpv\\mpv.exe';
     const title = p.get('title') || 'Nexus Player';
     const port = p.get('port') || '9340';
+    const referer = p.get('referer') || '';
     const status = document.getElementById('status');
     const actions = document.getElementById('actions');
 
@@ -40,7 +41,9 @@
       form.method = 'POST';
       form.action = `http://127.0.0.1:${port}/launch-form`;
       form.target = '_self';
-      for (const [name, value] of Object.entries({ url: stream, mpv, title })) {
+      const fields = { url: stream, mpv, title };
+      if (referer) fields.referer = referer;
+      for (const [name, value] of Object.entries(fields)) {
         const input = document.createElement('input');
         input.type = 'hidden';
         input.name = name;
@@ -53,6 +56,7 @@
 
     function launchViaGet() {
       const q = new URLSearchParams({ url: stream, mpv, title });
+      if (referer) q.set('referer', referer);
       const bridge = `http://127.0.0.1:${port}/launch?${q}`;
       location.replace(bridge);
     }
@@ -63,6 +67,7 @@
         return;
       }
       const q = new URLSearchParams({ url: stream, mpv, title });
+      if (referer) q.set('referer', referer);
       const bridge = `http://127.0.0.1:${port}/launch?${q}`;
       status.textContent = 'Opening local MPV bridge…';
       if (bridge.length > 5500 || stream.length > 1800) {
