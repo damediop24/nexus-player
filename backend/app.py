@@ -69,8 +69,9 @@ class PlayRequest(BaseModel):
 
 
 class LocalPlayRequest(BaseModel):
-    source_url: str
-    stream_url: str
+    source_url: Optional[str] = None
+    url: Optional[str] = None
+    stream_url: Optional[str] = None
     title: Optional[str] = None
     thumbnail: Optional[str] = None
     duration: Optional[float] = None
@@ -79,6 +80,21 @@ class LocalPlayRequest(BaseModel):
     stream_type: str = 'progressive'
     content_type: Optional[str] = None
     resolved_with: str = 'local-bridge'
+
+    @field_validator('source_url', 'url', 'stream_url', mode='before')
+    @classmethod
+    def _strip_local_fields(cls, value):
+        if value is None:
+            return value
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    def resolved_source_url(self) -> str:
+        return (self.source_url or self.url or '').strip()
+
+    def resolved_stream_url(self) -> str:
+        return (self.stream_url or '').strip()
 
 
 class ProgressRequest(BaseModel):
@@ -222,7 +238,8 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.5.1',
+        'version': '2.5.2',
+        'cookies_file': bool(__import__('resolver')._cookies_file_path()),
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -270,14 +287,30 @@ def api_play(req: PlayRequest):
 @app.post('/api/play/local')
 def api_play_local(req: LocalPlayRequest):
     try:
+        source_url = req.resolved_source_url()
+        stream_url = req.resolved_stream_url()
+        if not source_url:
+            raise HTTPException(400, {
+                'error': 'Missing source URL',
+                'code': 'invalid_local_play',
+                'hint': 'Local bridge must send source_url (the page link you pasted).',
+                'retriable': True,
+            })
+        if not stream_url:
+            raise HTTPException(400, {
+                'error': 'Missing stream URL from local bridge',
+                'code': 'invalid_local_play',
+                'hint': 'Start start-mpv-bridge.vbs on your PC and make sure it can resolve the link.',
+                'retriable': True,
+            })
         info = {
             'type': 'video',
             'title': req.title or 'Video',
-            'url': req.source_url,
+            'url': source_url,
             'thumbnail': req.thumbnail,
             'duration': req.duration,
             'site': req.site,
-            'stream_url': req.stream_url,
+            'stream_url': stream_url,
             'stream_type': req.stream_type,
             'content_type': req.content_type,
             'headers': req.headers or {},
@@ -287,16 +320,16 @@ def api_play_local(req: LocalPlayRequest):
                 'ext': req.stream_type if req.stream_type != 'progressive' else 'mp4',
                 'quality': 'direct',
                 'resolution': 'source',
-                'url': req.stream_url,
+                'url': stream_url,
             }],
             'best_format_id': 'direct',
             'subtitles': [],
         }
-        return _make_play_response(info, req.source_url)
+        return _make_play_response(info, source_url)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, str(e))
+        _raise_resolve_http(e)
 
 
 @app.post('/api/batch')

@@ -115,8 +115,10 @@ def _cookies_file_path():
     path = os.environ.get('YTDLP_COOKIES_FILE', '').strip()
     if path and Path(path).is_file():
         return path
-    default = ROOT / 'cookies.txt'
-    return str(default) if default.is_file() else None
+    for candidate in (ROOT / 'cookies.txt', Path('/data/cookies.txt')):
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 def _classify_resolve_error(exc, url):
@@ -125,19 +127,26 @@ def _classify_resolve_error(exc, url):
     site = 'youtube' if _is_youtube_url(url) else _host_key(urlparse(url).netloc) or None
 
     if _is_youtube_url(url):
-        if any(x in lower for x in ('sign in', 'login', 'confirm your age', 'members only', 'private video', 'not available')):
+        if any(x in lower for x in (
+            'sign in', 'login', 'confirm your age', 'confirm you', 'not a bot',
+            'members only', 'private video', 'not available', 'bot', 'captcha',
+        )):
             return ResolveError(
                 msg,
                 code='youtube_auth_required',
-                hint='Log into YouTube in Chrome/Edge, or run start-mpv-bridge.vbs on your PC.',
+                hint=(
+                    'YouTube blocked cloud resolve. On your PC: log into YouTube in Chrome, '
+                    'run start-mpv-bridge.vbs, then play again. '
+                    'For cloud: upload cookies.txt and set YTDLP_COOKIES_FILE=/data/cookies.txt on Render.'
+                ),
                 retriable=True,
                 site='youtube',
             )
-        if any(x in lower for x in ('bot', 'captcha', '403', 'forbidden', 'blocked', 'unable to extract')):
+        if any(x in lower for x in ('403', 'forbidden', 'blocked', 'unable to extract')):
             return ResolveError(
                 msg,
                 code='youtube_blocked',
-                hint='YouTube blocked cloud resolve. Run start-mpv-bridge.vbs on your PC, or paste a direct link.',
+                hint='YouTube blocked this server. Use the MPV bridge on your PC or add cookies.txt to the server.',
                 retriable=True,
                 site='youtube',
             )

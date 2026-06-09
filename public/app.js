@@ -50,6 +50,7 @@ const HLS_MAX_BUFFER_SEC = 72000;
 
 const FIT_MODES = ['contain', 'cover', 'fill', 'none'];
 const FIT_LABELS = { contain: 'Fit', cover: 'Crop', fill: 'Stretch', none: 'Original' };
+const MPV_BRIDGE_PORT = '9340';
 let queue = [];
 let queueIndex = -1;
 let hideTimer = null;
@@ -1035,12 +1036,32 @@ function handlePlaybackError(context, err) {
   if (nowPlaying) nowPlaying.textContent = 'Playback error';
 }
 
+async function isLocalBridgeAvailable() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${MPV_BRIDGE_PORT}/health`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return false;
+    const data = await res.json().catch(() => ({}));
+    return !!data.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function resolveViaLocalBridge(url) {
   const bridge = `http://127.0.0.1:${MPV_BRIDGE_PORT}/resolve?url=${encodeURIComponent(url)}`;
   const res = await fetch(bridge, { signal: AbortSignal.timeout(30000) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw attachApiError(data.error || data, res.status || 500);
-  return data;
+  const streamUrl = data.stream_url || data.streamUrl;
+  if (!streamUrl) {
+    throw attachApiError({
+      error: 'Local bridge returned no stream URL',
+      code: 'bridge_no_stream',
+      hint: 'Restart start-mpv-bridge.vbs and make sure YouTube works in Chrome on this PC.',
+      retriable: true,
+    }, 502);
+  }
+  return { ...data, stream_url: streamUrl, source_url: data.source_url || data.sourceUrl || url };
 }
 
 function applyPlayback(info, resumePos = 0) {
@@ -1064,18 +1085,26 @@ function applyPlayback(info, resumePos = 0) {
 }
 
 async function playViaLocalBridge(url, formatId = null, resumePos = 0) {
+  if (!(await isLocalBridgeAvailable())) {
+    throw attachApiError({
+      error: 'MPV bridge is not running on this PC',
+      code: 'bridge_offline',
+      hint: 'Double-click start-mpv-bridge.vbs on your Windows PC (logged into YouTube in Chrome), then try again.',
+      retriable: true,
+    }, 503);
+  }
   toast('Cloud blocked — resolving on your PC...', 8000);
   const resolved = await resolveViaLocalBridge(url);
   const info = await api('/api/play/local', {
     method: 'POST',
     body: JSON.stringify({
-      source_url: url,
+      source_url: resolved.source_url || url,
       stream_url: resolved.stream_url,
       title: resolved.title,
       thumbnail: resolved.thumbnail,
       duration: resolved.duration,
       site: resolved.site,
-      headers: resolved.headers,
+      headers: resolved.headers || {},
       stream_type: resolved.stream_type || 'progressive',
       content_type: resolved.content_type,
       resolved_with: resolved.resolved_with || 'local-bridge',
@@ -1118,12 +1147,15 @@ async function playUrl(url, formatId = null, resumePos = 0) {
     applyPlayback(info, resumePos);
   } catch (e) {
     if (shouldTryLocalBridge(e)) {
+      if (!(await isLocalBridgeAvailable())) {
+        handlePlaybackError('Blocked on cloud server', e);
+        return;
+      }
       try {
         await playViaLocalBridge(url, formatId, resumePos);
         return;
       } catch (localErr) {
-        toast('Local resolve failed — run start-mpv-bridge.vbs on your PC, then try again', 10000);
-        toast(formatPlayError(localErr), 8000);
+        handlePlaybackError('Local resolve failed', localErr);
         return;
       }
     }
@@ -1484,7 +1516,6 @@ $('#resolve-btn').addEventListener('click', async () => {
 });
 
 const DEFAULT_MPV_PATH = 'C:\\mpv\\mpv\\mpv.exe';
-const MPV_BRIDGE_PORT = '9340';
 
 function getMpvPath() {
   return localStorage.getItem('nexus-mpv-path') || DEFAULT_MPV_PATH;
@@ -1505,23 +1536,14 @@ async function refreshMpvBridgeStatus() {
   const el = $('#mpv-bridge-status');
   if (!el) return;
   const onLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(window.location.origin);
-  if (!onLocalhost) {
-    el.textContent = 'Run start-mpv-bridge.vbs on your PC — needed for MPV and blocked sites';
-    el.classList.remove('ok');
+  if (await isLocalBridgeAvailable()) {
+    el.textContent = 'Bridge running on this PC — MPV + local resolve for blocked sites';
+    el.classList.add('ok');
     return;
   }
-  try {
-    const res = await fetch(`http://127.0.0.1:${MPV_BRIDGE_PORT}/health`, { signal: AbortSignal.timeout(1200) });
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      el.textContent = data.resolve
-        ? 'Bridge running — MPV + local resolve for blocked sites'
-        : 'MPV bridge running — MPV button launches directly';
-      el.classList.add('ok');
-      return;
-    }
-  } catch (_) {}
-  el.textContent = 'Bridge not running — double-click start-mpv-bridge.vbs';
+  el.textContent = onLocalhost
+    ? 'Bridge not running — double-click start-mpv-bridge.vbs'
+    : 'Run start-mpv-bridge.vbs on your PC — needed for YouTube and blocked sites';
   el.classList.remove('ok');
 }
 
