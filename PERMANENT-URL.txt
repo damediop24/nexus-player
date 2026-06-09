@@ -1,0 +1,27 @@
+============================================
+  NEXUS PLAYER - PERMANENT FREE URL
+============================================
+
+Your permanent URL (after 1-click deploy):
+
+  https://nexus-45gb8rj3.onrender.com
+
+This URL never changes. Free forever on Render.
+(First load after idle may take ~30 seconds.)
+
+--------------------------------------------
+ACTIVATE IT NOW (2 minutes, one time):
+--------------------------------------------
+
+1. Open this link:
+   https://render.com/deploy?repo=https://github.com/damediop24/nexus-player
+
+2. Sign in with GitHub (damediop24)
+
+3. Click "Apply" then "Deploy"
+
+4. Wait ~5 minutes
+
+5. Open: https://nexus-45gb8rj3.onrender.com
+
+============================================

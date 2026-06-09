@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: nexus-player
+    name: nexus-45gb8rj3
     runtime: docker
     plan: free
     region: frankfurt
