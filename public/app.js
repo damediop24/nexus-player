@@ -478,6 +478,18 @@ async function loadProgressive(url) {
   startFullPrefetch(url, signal);
 }
 
+const BROWSER_NATIVE_VIDEO_EXTS = new Set(['mp4', 'webm', 'ogv', 'm4v', 'm4p', '3gp', '3g2', 'm3u8']);
+
+function streamExtFromInfo(info) {
+  const fmt = info?.formats?.find((f) => f.format_id === info?.best_format_id) || info?.formats?.[0];
+  return (fmt?.ext || '').toLowerCase();
+}
+
+function needsMpvInBrowser(ext) {
+  if (!ext || ext === 'm3u8' || ext === 'mpd') return false;
+  return !BROWSER_NATIVE_VIDEO_EXTS.has(ext);
+}
+
 function onVideoElementError() {
   const code = video.error?.code;
   const labels = {
@@ -487,9 +499,13 @@ function onVideoElementError() {
     4: 'Format not supported in browser',
   };
   const detail = labels[code] || 'Video playback failed';
+  const ext = streamExtFromInfo(currentMedia);
+  const hint = needsMpvInBrowser(ext)
+    ? `Browsers cannot play .${ext} reliably — click MPV to play this file.`
+    : 'Try another quality, MPV, or a direct .mp4/.m3u8 link.';
   handlePlaybackError(detail, {
     message: detail,
-    hint: 'Try another quality, MPV, or a direct .mp4/.m3u8 link.',
+    hint,
     retriable: true,
   });
 }
@@ -1062,7 +1078,13 @@ function isBlockedSiteError(msg) {
 
 function shouldTryLocalBridge(err) {
   if (!err) return false;
-  if (err.code === 'site_blocked' || err.code === 'youtube_blocked' || err.code === 'youtube_auth_required' || err.code === 'kvs_failed') {
+  if (
+    err.code === 'site_blocked'
+    || err.code === 'youtube_blocked'
+    || err.code === 'youtube_auth_required'
+    || err.code === 'kvs_failed'
+    || err.code === 'stremio_failed'
+  ) {
     return true;
   }
   return err.retriable !== false && isBlockedSiteError(err.message);
@@ -1172,6 +1194,11 @@ function applyPlayback(info, resumePos = 0) {
   populateFormats(info.formats || [], info.best_format_id);
   populateSubtitles(info.subtitles || []);
   loadSource(info.play_url, info.stream_type);
+
+  const ext = streamExtFromInfo(info);
+  if (needsMpvInBrowser(ext)) {
+    toast(`Playing .${ext} — use MPV if the browser shows "format not supported".`, 8000);
+  }
 
   const seekTo = () => {
     if (resumePos > 0 && getDuration()) video.currentTime = resumePos;

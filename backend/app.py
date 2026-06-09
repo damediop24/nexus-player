@@ -238,7 +238,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.5.7',
+        'version': '2.5.8',
         'cookies_file': bool(__import__('resolver')._cookies_file_path()),
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),

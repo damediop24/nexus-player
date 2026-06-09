@@ -194,6 +194,25 @@ def _classify_resolve_error(exc, url):
             site=site,
         )
 
+    if _is_stremio_resolver(url):
+        url_lower = url.lower()
+        hint = (
+            'Torrentio/debrid link may be expired, or the cloud server was blocked. '
+            'Get a fresh link from Stremio, or use MPV for .mkv/.avi files.'
+        )
+        if any(x in url_lower for x in ('.mkv', 'x265', 'hevc', '.avi', '.wmv', '.flv')):
+            hint = (
+                'MKV/AVI/WMV often cannot play in the browser — click MPV to play. '
+                'If resolve failed, refresh the Torrentio link or run start-mpv-bridge.vbs on your PC.'
+            )
+        return ResolveError(
+            msg,
+            code='stremio_failed',
+            hint=hint,
+            retriable=True,
+            site='stremio',
+        )
+
     return ResolveError(
         msg,
         code='resolve_failed',
@@ -643,8 +662,12 @@ def _build_response(info, url):
 
 
 _MEDIA_EXTENSIONS = (
-    '.mp4', '.webm', '.mkv', '.mov', '.avi', '.m4v', '.flv', '.wmv', '.ogv',
-    '.3gp', '.ts', '.m3u8', '.mpd', '.mp3', '.m4a', '.aac', '.ogg', '.wav', '.flac',
+    '.webm', '.mkv', '.flv', '.vob', '.ogv', '.ogg', '.gifv', '.mng', '.mov', '.avi',
+    '.qt', '.wmv', '.yuv', '.rm', '.asf', '.amv', '.mp4', '.m4p', '.m4v', '.mpg',
+    '.mp2', '.mpeg', '.mpe', '.svi', '.3gp', '.3g2', '.mxf', '.roq', '.nsv', '.f4v',
+    '.f4p', '.f4a', '.f4b', '.mod',
+    '.ts', '.m3u8', '.mpd',
+    '.mp3', '.m4a', '.aac', '.wav', '.flac',
 )
 
 _CDN_DOWNLOAD_HOSTS = (
@@ -667,7 +690,20 @@ _EXT_FROM_MIME = {
     'video/x-matroska': 'mkv',
     'video/quicktime': 'mov',
     'video/x-msvideo': 'avi',
+    'video/x-flv': 'flv',
+    'video/x-f4v': 'f4v',
+    'video/x-ms-wmv': 'wmv',
+    'video/x-ms-asf': 'asf',
+    'video/mpeg': 'mpeg',
+    'video/3gpp': '3gp',
+    'video/3gpp2': '3g2',
     'video/ogg': 'ogv',
+    'video/dvd': 'vob',
+    'video/x-amv': 'amv',
+    'video/x-svi': 'svi',
+    'application/vnd.rn-realmedia': 'rm',
+    'application/mxf': 'mxf',
+    'application/x-nsv': 'nsv',
     'audio/mpeg': 'mp3',
     'audio/mp4': 'm4a',
     'audio/aac': 'aac',
@@ -683,15 +719,41 @@ _MIME_FROM_EXT = {
     'webm': 'video/webm',
     'mkv': 'video/x-matroska',
     'mov': 'video/quicktime',
+    'qt': 'video/quicktime',
     'avi': 'video/x-msvideo',
+    'flv': 'video/x-flv',
+    'f4v': 'video/x-f4v',
+    'f4p': 'video/x-f4v',
+    'f4a': 'audio/mp4',
+    'f4b': 'audio/mp4',
+    'wmv': 'video/x-ms-wmv',
+    'asf': 'video/x-ms-asf',
     'm4v': 'video/mp4',
+    'm4p': 'video/mp4',
+    'mpg': 'video/mpeg',
+    'mpeg': 'video/mpeg',
+    'mpe': 'video/mpeg',
+    'mp2': 'video/mpeg',
+    'mod': 'video/mpeg',
+    'vob': 'video/dvd',
     'ogv': 'video/ogg',
+    'ogg': 'video/ogg',
+    'gifv': 'video/mp4',
+    'mng': 'video/mpeg',
+    'yuv': 'video/raw',
+    'rm': 'application/vnd.rn-realmedia',
+    'amv': 'video/x-amv',
+    'svi': 'video/x-svi',
+    '3gp': 'video/3gpp',
+    '3g2': 'video/3gpp2',
+    'mxf': 'application/mxf',
+    'roq': 'video/x-idsoftware-quake',
+    'nsv': 'application/x-nsv',
     'm3u8': 'application/vnd.apple.mpegurl',
     'mpd': 'application/dash+xml',
     'mp3': 'audio/mpeg',
     'm4a': 'audio/mp4',
     'aac': 'audio/aac',
-    'ogg': 'audio/ogg',
     'wav': 'audio/wav',
     'flac': 'audio/flac',
 }
@@ -719,25 +781,72 @@ def _title_from_stremio_url(url):
     return 'Stremio stream'
 
 
-def _resolve_stremio_url(url):
-    headers = {
+def _stremio_request_headers(referer=None):
+    return {
         'User-Agent': BROWSER_UA,
         'Accept': '*/*',
+        'Referer': referer or 'https://torrentio.strem.fun/',
     }
+
+
+def _url_from_stremio_body(resp):
+    content_type = (resp.headers.get('content-type') or '').lower()
+    body = resp.text or ''
+    if 'json' not in content_type and not body.lstrip().startswith(('{', '[')):
+        return None
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    if isinstance(data, str) and data.startswith('http'):
+        return data
+    if not isinstance(data, dict):
+        return None
+    for key in ('url', 'download', 'link', 'href', 'stream'):
+        val = data.get(key)
+        if isinstance(val, str) and val.startswith('http'):
+            return val
+    return None
+
+
+def _resolve_stremio_url(url):
+    headers = _stremio_request_headers()
+    max_hops = 10
 
     try:
         with httpx.Client(follow_redirects=False, timeout=httpx.Timeout(120.0, connect=30.0)) as client:
-            resp = client.get(url, headers=headers)
-            if resp.status_code in (301, 302, 303, 307, 308):
-                location = resp.headers.get('location')
-                if not location:
-                    return None
-                if location.startswith('/'):
-                    parsed = urlparse(url)
-                    location = f'{parsed.scheme}://{parsed.netloc}{location}'
-                return location
+            current = url
+            for _ in range(max_hops):
+                resp = client.get(current, headers=headers)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get('location')
+                    if not location:
+                        return None
+                    current = urljoin(current, location)
+                    parsed = urlparse(current)
+                    if parsed.scheme and parsed.netloc:
+                        headers['Referer'] = f'{parsed.scheme}://{parsed.netloc}/'
+                    continue
+                if resp.status_code in (200, 206):
+                    resolved = _url_from_stremio_body(resp)
+                    if resolved:
+                        return resolved
+                    final = str(resp.url)
+                    return final if final.startswith('http') else current
+                return None
+    except Exception:
+        pass
+
+    try:
+        with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(120.0, connect=30.0)) as client:
+            resp = client.get(url, headers=_stremio_request_headers())
             if resp.status_code in (200, 206):
-                return str(resp.url)
+                resolved = _url_from_stremio_body(resp)
+                if resolved:
+                    return resolved
+                final = str(resp.url)
+                if final.startswith('http') and final != url:
+                    return final
     except Exception:
         return None
     return None
@@ -765,6 +874,7 @@ def _resolve_stremio_stream(url):
                 'User-Agent': BROWSER_UA,
                 'Referer': _referer_for_url(final_url),
                 'Accept': '*/*',
+                'Origin': urlparse(final_url).scheme + '://' + urlparse(final_url).netloc,
             },
         }
     else:
@@ -902,10 +1012,19 @@ def _sniff_media_ext(data: bytes):
         return 'mp4'
     if data.startswith(b'\x1a\x45\xdf\xa3'):
         return 'mkv'
+    if data.startswith(b'FLV\x01'):
+        return 'flv'
+    if len(data) >= 12 and data[:4] == b'RIFF':
+        if data[8:12] == b'AVI ':
+            return 'avi'
+        if data[8:12] == b'WAVE':
+            return 'wav'
+    if len(data) >= 4 and data[:3] == b'\x00\x00\x01':
+        return 'mpeg'
+    if len(data) >= 4 and data[:4] == b'\x30\x26\xb2\x75':
+        return 'wmv'
     if data.startswith(b'\x1f\x8b'):
         return None
-    if len(data) >= 4 and data[:4] == b'RIFF' and len(data) >= 12 and data[8:12] == b'WAVE':
-        return 'wav'
     if data.startswith(b'ID3') or data[:2] == b'\xff\xfb':
         return 'mp3'
     if data.startswith(b'OggS'):
