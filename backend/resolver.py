@@ -526,10 +526,12 @@ def _extract(url, format_id=None, impersonate=None, cookies_browser=None, cookie
         opts['format'] = format_id
     else:
         opts['format'] = (
-            'best[ext=mp4][acodec!=none][vcodec!=none]/'
-            'best[ext=webm][acodec!=none][vcodec!=none]/'
-            'best[ext=mkv][acodec!=none][vcodec!=none]/'
-            'best[ext=mp4]/best[ext=webm]/best[ext=mkv]/best'
+            'bestvideo[height<=2160][vcodec^=avc1][ext=mp4]+bestaudio[acodec^=mp4a]/'
+            'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/'
+            'bestvideo[height<=2160]+bestaudio/'
+            'best[height<=2160][ext=mp4][acodec!=none][vcodec!=none]/'
+            'best[height<=2160][ext=webm][acodec!=none][vcodec!=none]/'
+            'best[height<=2160]/best'
         )
 
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -606,16 +608,38 @@ def _build_response(info, url):
         if f.get('url') or f.get('manifest_url'):
             formats.append(_format_entry(f))
 
+    def _format_height(f):
+        height = f.get('height') or 0
+        if height:
+            return int(height)
+        res = str(f.get('resolution') or '')
+        if 'x' in res:
+            try:
+                return int(res.split('x', 1)[1])
+            except ValueError:
+                pass
+        match = re.search(r'(\d{3,4})p', str(f.get('quality') or ''), re.I)
+        if match:
+            return int(match.group(1))
+        return 0
+
     def _format_score(f):
         score = 0
         if f.get('acodec') and f['acodec'] != 'none':
             score += 10000
         if f.get('vcodec') and f['vcodec'] != 'none':
             score += 10000
-        if f.get('ext') in ('mp4', 'webm', 'mkv'):
+        height = _format_height(f)
+        score += min(height, 2160) * 50
+        if f.get('ext') in ('mp4', 'webm'):
             score += 5000
-        if (f.get('vcodec') or '').startswith(('avc', 'vp9', 'vp8', 'hvc', 'hev')):
-            score += 2000
+        elif f.get('ext') == 'mkv':
+            score += 2500
+        vcodec = (f.get('vcodec') or '').lower()
+        if vcodec.startswith(('avc', 'vp9', 'vp8')):
+            score += 3000
+        elif vcodec.startswith(('hvc', 'hev')):
+            score += 1000
         proto = f.get('protocol') or ''
         url_l = (f.get('url') or '').lower()
         if 'm3u8' in url_l or 'm3u8' in proto:
@@ -852,6 +876,18 @@ def _resolve_stremio_url(url):
     return None
 
 
+def _requires_mpv_playback(title='', url='', ext=''):
+    text = f'{title} {url}'.lower()
+    ext_l = (ext or '').lower().lstrip('.')
+    if any(token in text for token in ('x265', 'hevc', 'h265', 'h.265', '10bit', 'hdr10', 'dolby vision')):
+        return True
+    if ext_l in ('mkv', 'avi', 'wmv', 'flv', 'vob', 'rm', 'rmvb', 'ts', 'm2ts'):
+        return True
+    if ext_l == 'mkv' or text.endswith('.mkv'):
+        return True
+    return False
+
+
 def _resolve_stremio_stream(url):
     final_url = _resolve_stremio_url(url)
     if not final_url:
@@ -860,30 +896,27 @@ def _resolve_stremio_stream(url):
         )
 
     title = _title_from_stremio_url(url)
-    probe = _probe_direct_url(final_url)
-    if not probe:
-        path_lower = final_url.lower().split('?')[0]
-        ext = path_lower.rsplit('.', 1)[-1] if '.' in path_lower else 'mp4'
-        probe = {
-            'ext': ext,
-            'stream_type': 'progressive',
-            'title': title,
-            'filesize': None,
-            'content_type': _MIME_FROM_EXT.get(ext, 'video/mp4'),
-            'headers': {
-                'User-Agent': BROWSER_UA,
-                'Referer': _referer_for_url(final_url),
-                'Accept': '*/*',
-                'Origin': urlparse(final_url).scheme + '://' + urlparse(final_url).netloc,
-            },
-        }
-    else:
-        probe['title'] = title
+    path_lower = final_url.lower().split('?')[0]
+    ext = path_lower.rsplit('.', 1)[-1] if '.' in path_lower else 'mp4'
+    probe = {
+        'ext': ext,
+        'stream_type': 'progressive',
+        'title': title,
+        'filesize': None,
+        'content_type': _MIME_FROM_EXT.get(ext, 'video/mp4'),
+        'headers': {
+            'User-Agent': BROWSER_UA,
+            'Referer': _referer_for_url(final_url),
+            'Accept': '*/*',
+            'Origin': urlparse(final_url).scheme + '://' + urlparse(final_url).netloc,
+        },
+    }
 
     result = _direct_media_response(final_url, probe)
     result['site'] = 'stremio'
     result['url'] = url
     result['title'] = title
+    result['requires_mpv'] = _requires_mpv_playback(title, url, ext)
     return result
 
 
@@ -1164,6 +1197,7 @@ def _direct_media_response(url, probe=None):
         'content_type': content_type,
         'subtitles': [],
         'headers': headers,
+        'requires_mpv': _requires_mpv_playback(title, url, ext),
     }
 
 

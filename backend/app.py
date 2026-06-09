@@ -236,7 +236,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.6.0',
+        'version': '2.6.1',
         'cookies_file': bool(__import__('resolver')._cookies_file_path()),
         'torrent_available': HAS_LIBTORRENT,
         'alldebrid': alldebrid_status(),

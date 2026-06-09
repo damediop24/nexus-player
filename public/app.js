@@ -490,6 +490,44 @@ function needsMpvInBrowser(ext) {
   return !BROWSER_NATIVE_VIDEO_EXTS.has(ext);
 }
 
+function needsMpvForCodec(info) {
+  if (!info) return false;
+  if (info.requires_mpv) return true;
+  const text = [
+    info.title,
+    info.source_url,
+    info.url,
+    streamExtFromInfo(info),
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (/\b(x265|hevc|h\.?265|h265|10bit|hdr10|dolby.?vision)\b/.test(text)) return true;
+  if (/\b\.?mkv\b/.test(text) || text.includes('.mkv')) return true;
+  return needsMpvInBrowser(streamExtFromInfo(info));
+}
+
+let blackVideoWatch = null;
+
+function clearBlackVideoWatch() {
+  if (blackVideoWatch) {
+    clearInterval(blackVideoWatch);
+    blackVideoWatch = null;
+  }
+}
+
+function startBlackVideoWatch() {
+  clearBlackVideoWatch();
+  let triggered = false;
+  blackVideoWatch = setInterval(() => {
+    if (triggered || !currentMedia || video.paused) return;
+    if (video.readyState < 2 || !(video.duration > 0) || video.currentTime < 1.5) return;
+    if (video.videoWidth === 0 && video.videoHeight === 0) {
+      triggered = true;
+      clearBlackVideoWatch();
+      toast('No picture in browser (codec not supported) — opening MPV…', 9000);
+      openInMpv().catch((e) => toast(formatPlayError(e), 6000));
+    }
+  }, 600);
+}
+
 function onVideoElementError() {
   const code = video.error?.code;
   const labels = {
@@ -508,9 +546,13 @@ function onVideoElementError() {
     hint,
     retriable: true,
   });
+  if (code === 3 || code === 4 || needsMpvForCodec(currentMedia)) {
+    openInMpv().catch((e) => toast(formatPlayError(e), 6000));
+  }
 }
 
 function loadSource(url, type = 'progressive') {
+  clearBlackVideoWatch();
   destroyHls();
   destroyDash();
   resetPrefetch();
@@ -1193,12 +1235,18 @@ function applyPlayback(info, resumePos = 0) {
   setMeta(info);
   populateFormats(info.formats || [], info.best_format_id);
   populateSubtitles(info.subtitles || []);
-  loadSource(info.play_url, info.stream_type);
 
-  const ext = streamExtFromInfo(info);
-  if (needsMpvInBrowser(ext)) {
-    toast(`Playing .${ext} — use MPV if the browser shows "format not supported".`, 8000);
+  if (needsMpvForCodec(info)) {
+    toast('H.265/MKV video needs MPV — opening player…', 8000);
+    openInMpv().catch((e) => toast(formatPlayError(e), 6000));
+    recordPlayback(info);
+    wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
+    return;
   }
+
+  wantsPlayback = true;
+  loadSource(info.play_url, info.stream_type);
+  startBlackVideoWatch();
 
   const seekTo = () => {
     if (resumePos > 0 && getDuration()) video.currentTime = resumePos;
@@ -1260,6 +1308,8 @@ async function playViaLocalBridge(url, formatId = null, resumePos = 0) {
 
 async function playUrl(url, formatId = null, resumePos = 0) {
   if (!url) return;
+  if (formatId == null) qualitySelect.value = '';
+  wantsPlayback = true;
   const alldebridMagnet = isMagnet(url) && appStatus?.alldebrid?.configured;
   if (alldebridMagnet) {
     toast('Sending to AllDebrid cloud...', 8000);
@@ -1275,7 +1325,7 @@ async function playUrl(url, formatId = null, resumePos = 0) {
   try {
     const info = await api('/api/play', {
       method: 'POST',
-      body: JSON.stringify({ url, format_id: formatId }),
+      body: JSON.stringify({ url, format_id: formatId || null }),
     });
 
     if (info.type === 'playlist') {

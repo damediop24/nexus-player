@@ -246,6 +246,16 @@ def _content_type_for_name(name: str) -> str:
     return mime.get(ext, 'video/mp4')
 
 
+def _requires_mpv_playback(title='', url='', ext=''):
+    text = f'{title} {url}'.lower()
+    ext_l = (ext or '').lower().lstrip('.')
+    if any(token in text for token in ('x265', 'hevc', 'h265', 'h.265', '10bit', 'hdr10', 'dolby vision')):
+        return True
+    if ext_l in ('mkv', 'avi', 'wmv', 'flv', 'vob', 'rm', 'rmvb', 'ts', 'm2ts'):
+        return True
+    return False
+
+
 def wait_for_magnet(magnet_id: int, timeout: float = 600.0) -> dict:
     deadline = time.time() + timeout
     last = None
@@ -317,6 +327,7 @@ def resolve_magnet(source: str, label: str = 'Magnet link') -> dict:
         },
         'resolved_with': 'alldebrid-cloud',
         'alldebrid_magnet_id': magnet_id,
+        'requires_mpv': _requires_mpv_playback(title, source, ext),
     }
 
 
@@ -378,4 +389,5 @@ def resolve_torrent_bytes(data: bytes, filename: str = 'upload.torrent') -> dict
         },
         'resolved_with': 'alldebrid-cloud',
         'alldebrid_magnet_id': magnet_id,
+        'requires_mpv': _requires_mpv_playback(title, source or filename, ext),
     }
