@@ -12,6 +12,7 @@ def create_token(
     headers: Optional[dict] = None,
     stream_type: str = 'progressive',
     content_type: Optional[str] = None,
+    refresh_url: Optional[str] = None,
 ) -> str:
     token = secrets.token_urlsafe(24)
     _tokens[token] = {
@@ -19,6 +20,7 @@ def create_token(
         'headers': headers or {},
         'stream_type': stream_type,
         'content_type': content_type,
+        'refresh_url': refresh_url,
         'expires': time.time() + STREAM_TTL,
     }
     _cleanup()

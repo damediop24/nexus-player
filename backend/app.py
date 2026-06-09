@@ -140,11 +140,13 @@ def _make_play_response(info: dict, source_url: str):
     elif info.get('stream_url', '').startswith('/api/'):
         play_url = info['stream_url']
     elif info.get('stream_url'):
+        refresh_url = source_url if info.get('resolved_with') == 'kvs-player' else None
         token = create_token(
             info['stream_url'],
             info.get('headers'),
             info.get('stream_type', 'progressive'),
             info.get('content_type'),
+            refresh_url=refresh_url,
         )
         play_url = f'/api/proxy/{token}'
     else:
@@ -191,7 +193,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.3.5',
+        'version': '2.3.6',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -268,11 +270,28 @@ async def proxy_stream(token: str, request: Request):
 
     client = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(120.0, read=120.0))
 
-    try:
-        upstream = await client.send(
+    async def fetch_upstream():
+        return await client.send(
             client.build_request('GET', entry['url'], headers=headers),
             stream=True,
         )
+
+    try:
+        upstream = await fetch_upstream()
+
+        if upstream.status_code in (401, 403) and entry.get('refresh_url'):
+            await upstream.aclose()
+            from resolver import _resolve_kvs_player
+            refreshed = _resolve_kvs_player(entry['refresh_url'])
+            entry['url'] = refreshed['stream_url']
+            entry['headers'] = refreshed.get('headers') or {}
+            headers.clear()
+            headers.update(entry['headers'])
+            if range_header:
+                headers['Range'] = range_header
+            if not any(k.lower() == 'user-agent' for k in headers):
+                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            upstream = await fetch_upstream()
 
         out_headers = {
             'Accept-Ranges': 'bytes',

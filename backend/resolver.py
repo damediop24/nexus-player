@@ -3,7 +3,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import yt_dlp
@@ -72,34 +72,18 @@ def _available_impersonate_targets():
         except Exception:
             pass
 
-        if not targets:
-            try:
-                from curl_cffi.requests import Session
-                session = Session()
-                session.get(
-                    'https://example.com/',
-                    impersonate='chrome',
-                    timeout=8,
-                    verify=False,
-                )
-                targets.append('chrome')
-            except Exception:
-                pass
-
     _IMPERSONATE_TARGETS = targets
     return targets
 
 
 def _pick_impersonate_target(preferred=None):
-    available = _available_impersonate_targets()
-    if not available:
+    if not preferred:
         return None
-    if preferred and preferred.lower() in available:
-        return preferred.lower()
-    for candidate in (preferred, 'chrome', 'edge', 'firefox', 'safari'):
-        if candidate and candidate.lower() in available:
-            return candidate.lower()
-    return available[0]
+    available = _available_impersonate_targets()
+    preferred = preferred.lower()
+    if preferred in available:
+        return preferred
+    return None
 
 
 def _browser_cookie_db(profile_root: Path, browser: str):
@@ -247,15 +231,25 @@ def _should_try_kvs_player(url):
 
 def _resolve_kvs_player(url):
     page_url = url
+    parsed = urlparse(url)
+    site_origin = f'{parsed.scheme}://{parsed.netloc}/'
     headers = {
         'User-Agent': BROWSER_UA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': f'{urlparse(url).scheme}://{urlparse(url).netloc}/',
+        'Referer': site_origin,
+        'Origin': f'{parsed.scheme}://{parsed.netloc}',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
     }
 
     with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=30.0)) as client:
         resp = client.get(url, headers=headers)
+        if resp.status_code == 403:
+            raise RuntimeError('Site blocked this server (403)')
         resp.raise_for_status()
         html = resp.text
 
@@ -270,6 +264,10 @@ def _resolve_kvs_player(url):
             break
     if not stream_url:
         raise RuntimeError('KVS video_url not found')
+    if stream_url.startswith('//'):
+        stream_url = f'{parsed.scheme}:{stream_url}'
+    elif stream_url.startswith('/'):
+        stream_url = urljoin(page_url, stream_url)
 
     title_match = re.search(r'<title>([^<]+)</title>', html, re.I)
     title = title_match.group(1).strip() if title_match else 'Video'
@@ -859,10 +857,12 @@ def resolve_url(url, format_id=None):
         try:
             return _resolve_kvs_player(url)
         except Exception as kvs_error:
-            last_error = kvs_error
-    else:
-        last_error = None
+            raise RuntimeError(
+                f'{kvs_error} — This site uses embedded video that must be scraped directly. '
+                'If playback fails, the site may block cloud servers; try again later or use a direct .mp4 link.'
+            ) from kvs_error
 
+    last_error = None
     for strategy in _build_strategies():
         try:
             info = _extract(
