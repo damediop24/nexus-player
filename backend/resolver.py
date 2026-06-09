@@ -1,8 +1,11 @@
 import importlib.util
+import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
+import httpx
 import yt_dlp
 
 ROOT = Path(__file__).parent.parent
@@ -270,36 +273,253 @@ def _build_response(info, url):
     }
 
 
+_MEDIA_EXTENSIONS = (
+    '.mp4', '.webm', '.mkv', '.mov', '.avi', '.m4v', '.flv', '.wmv', '.ogv',
+    '.3gp', '.ts', '.m3u8', '.mpd', '.mp3', '.m4a', '.aac', '.ogg', '.wav', '.flac',
+)
+
+_CDN_DOWNLOAD_HOSTS = (
+    'mypikpak.com',
+    'pikpak.com',
+    'pikpakdrive.com',
+)
+
+_EXT_FROM_MIME = {
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/x-matroska': 'mkv',
+    'video/quicktime': 'mov',
+    'video/x-msvideo': 'avi',
+    'video/ogg': 'ogv',
+    'audio/mpeg': 'mp3',
+    'audio/mp4': 'm4a',
+    'audio/aac': 'aac',
+    'audio/ogg': 'ogg',
+    'audio/wav': 'wav',
+    'audio/flac': 'flac',
+    'application/vnd.apple.mpegurl': 'm3u8',
+    'application/dash+xml': 'mpd',
+}
+
+_MIME_FROM_EXT = {
+    'mp4': 'video/mp4',
+    'webm': 'video/webm',
+    'mkv': 'video/x-matroska',
+    'mov': 'video/quicktime',
+    'avi': 'video/x-msvideo',
+    'm4v': 'video/mp4',
+    'ogv': 'video/ogg',
+    'm3u8': 'application/vnd.apple.mpegurl',
+    'mpd': 'application/dash+xml',
+    'mp3': 'audio/mpeg',
+    'm4a': 'audio/mp4',
+    'aac': 'audio/aac',
+    'ogg': 'audio/ogg',
+    'wav': 'audio/wav',
+    'flac': 'audio/flac',
+}
+
+
 def _is_direct_media(url):
     lower = url.lower().split('?')[0]
-    return lower.endswith((
-        '.mp4', '.webm', '.mkv', '.mov', '.avi', '.m4v', '.flv', '.wmv', '.ogv',
-        '.3gp', '.ts', '.m3u8', '.mpd', '.mp3', '.m4a', '.aac', '.ogg', '.wav', '.flac',
-    ))
+    return lower.endswith(_MEDIA_EXTENSIONS)
 
 
-def _direct_media_response(url):
-    ext = url.lower().split('?')[0].rsplit('.', 1)[-1]
-    stream_type = 'hls' if ext == 'm3u8' else 'dash' if ext == 'mpd' else 'progressive'
+def _looks_like_cdn_download(url):
+    lower = url.lower()
+    host = urlparse(url).netloc.lower()
+    if any(h in host for h in _CDN_DOWNLOAD_HOSTS):
+        return True
+    if '/download' in lower and ('?' in url or lower.rstrip('/').endswith('/download')):
+        return True
+    if 'response-content-type=video' in lower or 'content-type=video' in lower:
+        return True
+    return False
+
+
+def _referer_for_url(url):
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if 'mypikpak.com' in host or 'pikpak' in host:
+        return 'https://mypikpak.com/'
+    if parsed.scheme and parsed.netloc:
+        return f'{parsed.scheme}://{parsed.netloc}/'
+    return url
+
+
+def _filename_from_disposition(value):
+    if not value:
+        return None
+    match = re.search(r"filename\*=UTF-8''([^;]+)", value, re.I)
+    if match:
+        from urllib.parse import unquote
+        return unquote(match.group(1))
+    match = re.search(r'filename="?([^";]+)"?', value, re.I)
+    return match.group(1) if match else None
+
+
+def _sniff_media_ext(data: bytes):
+    if len(data) >= 12 and data[4:8] == b'ftyp':
+        brand = data[8:12].decode('ascii', errors='ignore').lower()
+        if brand.startswith('m4'):
+            return 'm4a' if brand in ('m4a ', 'm4b ') else 'mp4'
+        return 'mp4'
+    if data.startswith(b'\x1a\x45\xdf\xa3'):
+        return 'mkv'
+    if data.startswith(b'\x1f\x8b'):
+        return None
+    if len(data) >= 4 and data[:4] == b'RIFF' and len(data) >= 12 and data[8:12] == b'WAVE':
+        return 'wav'
+    if data.startswith(b'ID3') or data[:2] == b'\xff\xfb':
+        return 'mp3'
+    if data.startswith(b'OggS'):
+        return 'ogg'
+    if data.startswith(b'fLaC'):
+        return 'flac'
+    if len(data) >= 4 and data[:4] == b'\x1aE\xdf\xa3':
+        return 'webm'
+    return None
+
+
+def _ext_from_content_type(content_type):
+    if not content_type:
+        return None
+    mime = content_type.split(';')[0].strip().lower()
+    if mime in _EXT_FROM_MIME:
+        return _EXT_FROM_MIME[mime]
+    if mime.startswith('video/'):
+        return mime.split('/', 1)[1]
+    if mime.startswith('audio/'):
+        return mime.split('/', 1)[1]
+    return None
+
+
+def _probe_direct_url(url):
+    headers = {
+        'User-Agent': BROWSER_UA,
+        'Accept': '*/*',
+        'Referer': _referer_for_url(url),
+        'Range': 'bytes=0-511',
+    }
+
+    try:
+        with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(20.0, read=20.0)) as client:
+            resp = client.get(url, headers=headers)
+            if resp.status_code not in (200, 206):
+                resp = client.head(
+                    url,
+                    headers={k: v for k, v in headers.items() if k.lower() != 'range'},
+                )
+                if resp.status_code >= 400:
+                    return None
+                body = b''
+            else:
+                body = resp.content
+
+            content_type = (resp.headers.get('content-type') or '').split(';')[0].strip().lower()
+            content_length = resp.headers.get('content-length')
+            try:
+                filesize = int(content_length) if content_length else None
+            except ValueError:
+                filesize = None
+
+            filename = _filename_from_disposition(resp.headers.get('content-disposition'))
+            ext = None
+            if filename and '.' in filename:
+                ext = filename.rsplit('.', 1)[-1].lower()
+
+            if not ext:
+                ext = _ext_from_content_type(content_type)
+
+            if not ext and body:
+                ext = _sniff_media_ext(body)
+
+            if not ext and content_type in ('binary/octet-stream', 'application/octet-stream', 'application/download'):
+                ext = _sniff_media_ext(body)
+
+            if not ext:
+                return None
+
+            if ext == 'm3u8':
+                stream_type = 'hls'
+            elif ext == 'mpd':
+                stream_type = 'dash'
+            else:
+                stream_type = 'progressive'
+
+            title = filename or urlparse(url).netloc or 'Direct stream'
+            mime = _MIME_FROM_EXT.get(ext) or (
+                content_type if content_type and content_type != 'binary/octet-stream'
+                and content_type != 'application/octet-stream' else None
+            )
+
+            return {
+                'ext': ext,
+                'stream_type': stream_type,
+                'title': title,
+                'filesize': filesize,
+                'content_type': mime or _MIME_FROM_EXT.get(ext, 'video/mp4'),
+                'headers': {
+                    'User-Agent': BROWSER_UA,
+                    'Referer': _referer_for_url(url),
+                    'Accept': '*/*',
+                },
+            }
+    except Exception:
+        return None
+
+
+def _direct_media_response(url, probe=None):
+    if probe:
+        ext = probe['ext']
+        stream_type = probe['stream_type']
+        title = probe['title']
+        filesize = probe.get('filesize')
+        headers = probe.get('headers') or {'User-Agent': BROWSER_UA, 'Referer': _referer_for_url(url)}
+        content_type = probe.get('content_type')
+    else:
+        ext = url.lower().split('?')[0].rsplit('.', 1)[-1]
+        stream_type = 'hls' if ext == 'm3u8' else 'dash' if ext == 'mpd' else 'progressive'
+        title = url.split('/')[-1].split('?')[0] or 'Direct stream'
+        filesize = None
+        headers = {'User-Agent': BROWSER_UA, 'Referer': _referer_for_url(url)}
+        content_type = _MIME_FROM_EXT.get(ext)
+
+    host = urlparse(url).netloc.lower()
+    site = 'pikpak' if 'pikpak' in host else 'direct'
+
     return {
         'type': 'video',
-        'title': url.split('/')[-1].split('?')[0] or 'Direct stream',
+        'title': title,
         'url': url,
         'thumbnail': None,
         'duration': None,
-        'site': 'direct',
-        'formats': [{'format_id': 'direct', 'ext': ext, 'quality': 'direct', 'resolution': 'source', 'url': url}],
+        'site': site,
+        'formats': [{
+            'format_id': 'direct',
+            'ext': ext,
+            'quality': 'direct',
+            'resolution': 'source',
+            'filesize': filesize,
+            'url': url,
+        }],
         'best_format_id': 'direct',
         'stream_url': url,
         'stream_type': stream_type,
+        'content_type': content_type,
         'subtitles': [],
-        'headers': {'User-Agent': BROWSER_UA, 'Referer': url},
+        'headers': headers,
     }
 
 
 def resolve_url(url, format_id=None):
     if _is_direct_media(url):
         return _direct_media_response(url)
+
+    if _looks_like_cdn_download(url):
+        probe = _probe_direct_url(url)
+        if probe:
+            return _direct_media_response(url, probe)
 
     last_error = None
 

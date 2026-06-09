@@ -7,12 +7,18 @@ STREAM_TTL = 6 * 3600
 _tokens: dict[str, dict] = {}
 
 
-def create_token(url: str, headers: Optional[dict] = None, stream_type: str = 'progressive') -> str:
+def create_token(
+    url: str,
+    headers: Optional[dict] = None,
+    stream_type: str = 'progressive',
+    content_type: Optional[str] = None,
+) -> str:
     token = secrets.token_urlsafe(24)
     _tokens[token] = {
         'url': url,
         'headers': headers or {},
         'stream_type': stream_type,
+        'content_type': content_type,
         'expires': time.time() + STREAM_TTL,
     }
     _cleanup()

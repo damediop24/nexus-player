@@ -123,6 +123,7 @@ def _make_play_response(info: dict, source_url: str):
         info['stream_url'],
         info.get('headers'),
         info.get('stream_type', 'progressive'),
+        info.get('content_type'),
     )
 
     conn = get_conn()
@@ -250,7 +251,16 @@ async def proxy_stream(token: str, request: Request):
                 out_headers[key] = upstream.headers[key]
 
         media_type = upstream.headers.get('content-type')
-        if not media_type:
+        generic_types = {'binary/octet-stream', 'application/octet-stream', 'application/download'}
+        if media_type:
+            base_mime = media_type.split(';')[0].strip().lower()
+            if base_mime in generic_types and entry.get('content_type'):
+                media_type = entry['content_type']
+                out_headers['content-type'] = media_type
+        elif entry.get('content_type'):
+            media_type = entry['content_type']
+            out_headers['content-type'] = media_type
+        else:
             media_type = 'application/vnd.apple.mpegurl' if entry.get('stream_type') == 'hls' else 'video/mp4'
 
         if request.method == 'HEAD':
