@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexus Player</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-icon">▶</span>
+        <span class="brand-name">Nexus Player</span>
+        <span class="brand-badge">PRO</span>
+      </div>
+
+      <div class="url-bar">
+        <input id="url-input" type="text" placeholder="Paste URL, magnet link, or drop a file..." spellcheck="false" />
+        <button id="play-btn" class="btn btn-accent" type="button">Play</button>
+        <button id="resolve-btn" class="btn btn-ghost" type="button" title="Inspect formats">Inspect</button>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="loop-btn" class="btn btn-ghost" type="button" title="Loop (R)">🔁</button>
+        <button id="shuffle-btn" class="btn btn-ghost" type="button" title="Shuffle queue">🔀</button>
+        <button id="screenshot-btn" class="btn btn-ghost" type="button" title="Screenshot (S)">📷</button>
+        <button id="mpv-btn" class="btn btn-ghost" type="button" title="Open in MPV">MPV</button>
+        <button id="pip-btn" class="btn btn-ghost" type="button" title="Picture-in-Picture">PiP</button>
+        <button id="fs-btn" class="btn btn-ghost" type="button" title="Fullscreen">⛶</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <section class="player-section">
+        <div class="player-wrap" id="player-wrap">
+          <div class="video-stage" id="video-stage">
+            <video id="video" playsinline preload="auto"></video>
+          </div>
+
+          <div class="fs-fit-bar" id="fs-fit-bar">
+            <span class="fs-fit-label">Display</span>
+            <button class="fit-btn active" data-fit="contain" type="button" title="Fit — show full video">Fit</button>
+            <button class="fit-btn" data-fit="cover" type="button" title="Crop — fill screen">Crop</button>
+            <button class="fit-btn" data-fit="fill" type="button" title="Stretch — fill screen">Stretch</button>
+            <button class="fit-btn" data-fit="none" type="button" title="Original size">Original</button>
+          </div>
+          <div id="player-overlay" class="player-overlay">
+            <div class="overlay-center" id="overlay-center">
+              <div class="drop-zone" id="drop-zone">
+                <div class="drop-icon">⬇</div>
+                <p>Drop URL or video file here</p>
+                <span class="hint">YouTube · Twitch · Vimeo · 1800+ sites via yt-dlp</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="seek-preview" id="seek-preview">
+            <span id="seek-preview-time">0:00</span>
+          </div>
+
+          <div class="controls" id="controls">
+            <div class="progress-wrap" id="progress-wrap">
+              <div class="progress-hitarea" id="progress-hitarea">
+                <div class="progress-bar" id="progress-bar">
+                  <div class="progress-buffered" id="progress-buffered"></div>
+                  <div class="progress-played" id="progress-played"></div>
+                  <div class="ab-marker ab-a hidden" id="ab-marker-a"></div>
+                  <div class="ab-marker ab-b hidden" id="ab-marker-b"></div>
+                  <div class="ab-range hidden" id="ab-range"></div>
+                  <div class="progress-thumb" id="progress-thumb"></div>
+                </div>
+              </div>
+              <div class="time-display">
+                <span id="time-current">0:00</span>
+                <span>/</span>
+                <span id="time-total">0:00</span>
+              </div>
+            </div>
+
+            <div class="controls-row">
+              <div class="controls-left">
+                <button class="ctrl-btn" id="prev-btn" title="Previous">⏮</button>
+                <button class="ctrl-btn ctrl-btn-lg" id="toggle-btn" title="Play/Pause">▶</button>
+                <button class="ctrl-btn" id="next-btn" title="Next">⏭</button>
+                <div class="volume-wrap">
+                  <button class="ctrl-btn" id="mute-btn" title="Mute">🔊</button>
+                  <input type="range" id="volume-slider" min="0" max="200" value="100" />
+                </div>
+                <span class="now-playing" id="now-playing">No media loaded</span>
+              </div>
+
+              <div class="controls-right">
+                <select id="quality-select" class="ctrl-select" title="Quality">
+                  <option value="">Auto quality</option>
+                </select>
+                <select id="subtitle-select" class="ctrl-select" title="Subtitles">
+                  <option value="">No subtitles</option>
+                </select>
+                <select id="fit-select" class="ctrl-select" title="Display mode (V)">
+                  <option value="contain" selected>Fit</option>
+                  <option value="cover">Crop</option>
+                  <option value="fill">Stretch</option>
+                  <option value="none">Original</option>
+                </select>
+                <select id="speed-select" class="ctrl-select" title="Speed">
+                  <option value="0.25">0.25×</option>
+                  <option value="0.5">0.5×</option>
+                  <option value="0.75">0.75×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="1.25">1.25×</option>
+                  <option value="1.5">1.5×</option>
+                  <option value="1.75">1.75×</option>
+                  <option value="2">2×</option>
+                  <option value="3">3×</option>
+                  <option value="4">4×</option>
+                </select>
+                <button class="ctrl-btn" id="ab-btn" title="A-B Loop (set A then B)">A-B</button>
+                <button class="ctrl-btn" id="fav-btn" title="Add to favorites">★</button>
+                <button class="ctrl-btn" id="download-btn" title="Download">↓</button>
+                <button class="ctrl-btn" id="repeat-btn" title="Repeat queue">↻</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="meta-panel" id="meta-panel">
+          <div class="meta-thumb" id="meta-thumb"></div>
+          <div class="meta-info">
+            <h2 id="meta-title">—</h2>
+            <p id="meta-details"></p>
+          </div>
+        </div>
+      </section>
+
+      <aside class="sidebar">
+        <nav class="tabs">
+          <button class="tab active" data-tab="queue">Queue</button>
+          <button class="tab" data-tab="history">History</button>
+          <button class="tab" data-tab="favorites">Favorites</button>
+          <button class="tab" data-tab="playlists">Playlists</button>
+          <button class="tab" data-tab="downloads">Downloads</button>
+          <button class="tab" data-tab="library">Library</button>
+        </nav>
+
+        <div class="tab-panel active" id="panel-queue">
+          <div class="panel-actions">
+            <button class="btn btn-sm" id="batch-btn" type="button">Batch paste</button>
+            <button class="btn btn-sm btn-ghost" id="clear-queue-btn" type="button">Clear</button>
+          </div>
+          <ul class="item-list" id="queue-list"></ul>
+        </div>
+
+        <div class="tab-panel" id="panel-history">
+          <div class="panel-actions">
+            <button class="btn btn-sm btn-ghost" id="clear-history-btn" type="button">Clear all</button>
+          </div>
+          <ul class="item-list" id="history-list"></ul>
+        </div>
+
+        <div class="tab-panel" id="panel-favorites">
+          <ul class="item-list" id="favorites-list"></ul>
+        </div>
+
+        <div class="tab-panel" id="panel-playlists">
+          <div class="panel-actions">
+            <button class="btn btn-sm" id="new-playlist-btn" type="button">+ Playlist</button>
+          </div>
+          <div id="playlists-container"></div>
+        </div>
+
+        <div class="tab-panel" id="panel-downloads">
+          <ul class="item-list" id="downloads-list"></ul>
+        </div>
+
+        <div class="tab-panel" id="panel-library">
+          <div class="panel-actions">
+            <button class="btn btn-sm btn-ghost" id="refresh-library-btn" type="button">Refresh</button>
+          </div>
+          <ul class="item-list" id="library-list"></ul>
+        </div>
+
+        <footer class="sidebar-footer">
+          <div class="status-line">
+            <span id="status-dot" class="status-dot"></span>
+            <span id="status-text">Connecting...</span>
+          </div>
+          <div class="remote-url" id="remote-url" title="Remote control URL"></div>
+        </footer>
+      </aside>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <dialog id="batch-dialog">
+    <form method="dialog">
+      <h3>Batch paste URLs</h3>
+      <p>One URL per line — all will be queued.</p>
+      <textarea id="batch-text" rows="8" placeholder="https://...\nhttps://..."></textarea>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
+        <button id="batch-submit" value="ok" class="btn btn-accent" type="submit">Queue all</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="formats-dialog">
+    <form method="dialog">
+      <h3>Available formats</h3>
+      <div id="formats-list" class="formats-list"></div>
+      <div class="dialog-actions">
+        <button value="close" class="btn btn-ghost" type="submit">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
