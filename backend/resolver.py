@@ -41,6 +41,8 @@ _YOUTUBE_HOSTS = (
 
 _URL_IN_TEXT_RE = re.compile(r'https?://[^\s<>"\']+|magnet:\?[^\s<>"\']+', re.I)
 
+_EROME_MP4_RE = re.compile(r'https?://v\d+\.erome\.com/[^\s"\'<>]+\.mp4', re.I)
+
 
 class ResolveError(Exception):
     def __init__(self, message, code='resolve_failed', hint=None, retriable=False, site=None):
@@ -70,6 +72,11 @@ def _host_key(netloc):
 
 def _is_youtube_url(url):
     return _host_key(urlparse(url).netloc) in _YOUTUBE_HOSTS
+
+
+def _is_erome_url(url):
+    host = _host_key(urlparse(url).netloc)
+    return host == 'erome.com' or host.endswith('.erome.com')
 
 
 def normalize_play_url(url):
@@ -785,9 +792,86 @@ def _referer_for_url(url):
     host = parsed.netloc.lower()
     if 'mypikpak.com' in host or 'pikpak' in host:
         return 'https://mypikpak.com/'
+    if 'erome.com' in host:
+        return 'https://www.erome.com/'
     if parsed.scheme and parsed.netloc:
         return f'{parsed.scheme}://{parsed.netloc}/'
     return url
+
+
+def _resolve_erome(url):
+    headers = {
+        'User-Agent': BROWSER_UA,
+        'Referer': 'https://www.erome.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+
+    with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=30.0)) as client:
+        resp = client.get(url, headers=headers)
+        if resp.status_code == 403:
+            raise RuntimeError('Erome blocked this server (403)')
+        resp.raise_for_status()
+        html = resp.text
+
+    title_match = re.search(r'<title>([^<]+)</title>', html, re.I)
+    title = title_match.group(1).strip() if title_match else 'Erome'
+    title = re.sub(r'\s*[-|]\s*Erome.*$', '', title, flags=re.I).strip() or 'Erome'
+
+    mp4s = []
+    seen = set()
+    for match in _EROME_MP4_RE.findall(html):
+        clean = match.rstrip('",\'')
+        if clean not in seen:
+            seen.add(clean)
+            mp4s.append(clean)
+
+    if not mp4s:
+        raise ResolveError(
+            'No videos found on this Erome page',
+            code='no_stream',
+            hint='Open an album page (erome.com/a/…) that contains videos.',
+            retriable=False,
+            site='erome.com',
+        )
+
+    stream_headers = {
+        'User-Agent': BROWSER_UA,
+        'Referer': url,
+        'Accept': '*/*',
+    }
+
+    if len(mp4s) == 1:
+        result = _direct_media_response(mp4s[0], {
+            'ext': 'mp4',
+            'stream_type': 'progressive',
+            'title': title,
+            'filesize': None,
+            'content_type': 'video/mp4',
+            'headers': stream_headers,
+        })
+        result['url'] = url
+        result['title'] = title
+        result['site'] = 'erome'
+        result['resolved_with'] = 'erome-scraper'
+        return result
+
+    entries = []
+    for i, stream_url in enumerate(mp4s):
+        entries.append({
+            'id': str(i),
+            'title': f'{title} ({i + 1})',
+            'url': stream_url,
+            'thumbnail': None,
+            'duration': None,
+        })
+    return {
+        'type': 'playlist',
+        'title': title,
+        'entries': entries,
+        'url': url,
+        'resolved_with': 'erome-scraper',
+    }
 
 
 def _filename_from_disposition(value):
@@ -1027,6 +1111,15 @@ def resolve_url(url, format_id=None):
         except Exception as exc:
             raise _classify_resolve_error(exc, url) from exc
 
+    if _is_erome_url(url):
+        try:
+            return _resolve_erome(url)
+        except ResolveError:
+            raise
+        except Exception as exc:
+            if not _is_retriable(exc):
+                raise _classify_resolve_error(exc, url) from exc
+
     if _is_direct_media(url):
         return _direct_media_response(url)
 
@@ -1060,6 +1153,10 @@ def resolve_url(url, format_id=None):
                 cookiefile=strategy.get('cookiefile'),
             )
             result = _build_response(info, url)
+            if result.get('type') == 'playlist' and result.get('entries'):
+                if strategy['label'] != 'default':
+                    result['resolved_with'] = strategy['label']
+                return result
             if not result.get('stream_url'):
                 if _looks_like_cdn_download(url):
                     return _direct_media_response(url, _cdn_download_fallback(url))
