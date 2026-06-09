@@ -41,7 +41,10 @@ let fitMode = localStorage.getItem('nexus-fit-mode') || 'contain';
 const LIBRARY_KEY = 'nexus-library-v1';
 let prefetchController = null;
 let prefetchBlobUrl = null;
-const MAX_BLOB_CACHE = 400 * 1024 * 1024;
+let prefetchFileUrl = null;
+let prefetchState = { percent: 0, active: false, url: null };
+const MAX_BLOB_CACHE = 2 * 1024 * 1024 * 1024;
+const HLS_MAX_BUFFER_SEC = 72000;
 
 const FIT_MODES = ['contain', 'cover', 'fill', 'none'];
 const FIT_LABELS = { contain: 'Fit', cover: 'Crop', fill: 'Stretch', none: 'Original' };
@@ -253,71 +256,179 @@ function getBufferedPercent() {
   return (maxEnd / dur) * 100;
 }
 
+function setPrefetchPercent(pct) {
+  prefetchState.percent = Math.min(100, Math.max(0, pct));
+  updateBufferBar();
+}
+
+function updateBufferBar() {
+  const bufPct = Math.max(getBufferedPercent(), prefetchState.percent);
+  progressBuffered.style.width = bufPct + '%';
+}
+
+function resetPrefetch() {
+  if (prefetchController) prefetchController.abort();
+  if (prefetchBlobUrl) {
+    URL.revokeObjectURL(prefetchBlobUrl);
+    prefetchBlobUrl = null;
+  }
+  if (prefetchFileUrl) {
+    URL.revokeObjectURL(prefetchFileUrl);
+    prefetchFileUrl = null;
+  }
+  prefetchState = { percent: 0, active: false, url: null };
+  progressBuffered.style.width = '0%';
+}
+
+function swapToLocalPlayback(localUrl) {
+  const t = video.currentTime;
+  const playing = !video.paused;
+  video.src = localUrl;
+  video.addEventListener('loadedmetadata', () => {
+    if (t > 0) video.currentTime = t;
+    if (playing) tryPlay();
+    setPrefetchPercent(100);
+  }, { once: true });
+}
+
+function hasOpfs() {
+  return typeof navigator.storage?.getDirectory === 'function';
+}
+
+async function prefetchToOpfs(url, total, signal) {
+  const root = await navigator.storage.getDirectory();
+  const handle = await root.getFileHandle('nexus-prefetch.bin', { create: true });
+  const writable = await handle.createWritable();
+  const res = await fetch(url, { signal });
+  if (!res.ok || !res.body) return;
+  const reader = res.body.getReader();
+  let received = 0;
+  prefetchState.active = true;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    await writable.write(value);
+    received += value.length;
+    if (total) setPrefetchPercent((received / total) * 100);
+    else if (received) setPrefetchPercent(Math.min(99, received / (50 * 1024 * 1024)));
+  }
+  await writable.close();
+  const file = await handle.getFile();
+  if (prefetchFileUrl) URL.revokeObjectURL(prefetchFileUrl);
+  prefetchFileUrl = URL.createObjectURL(file);
+  prefetchState.active = false;
+  swapToLocalPlayback(prefetchFileUrl);
+}
+
 async function prefetchToBlob(url, total, signal) {
   const res = await fetch(url, { signal });
   if (!res.ok || !res.body) return;
   const reader = res.body.getReader();
   const chunks = [];
   let received = 0;
+  prefetchState.active = true;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
     received += value.length;
-    if (total) progressBuffered.style.width = `${(received / total) * 100}%`;
+    if (total) setPrefetchPercent((received / total) * 100);
   }
   if (prefetchBlobUrl) URL.revokeObjectURL(prefetchBlobUrl);
   const blob = new Blob(chunks, { type: res.headers.get('content-type') || 'video/mp4' });
   prefetchBlobUrl = URL.createObjectURL(blob);
-  const t = video.currentTime;
-  const playing = !video.paused;
-  video.src = prefetchBlobUrl;
-  video.addEventListener('loadedmetadata', () => {
-    if (t > 0) video.currentTime = t;
-    if (playing) tryPlay();
-  }, { once: true });
+  prefetchState.active = false;
+  swapToLocalPlayback(prefetchBlobUrl);
+}
+
+async function prefetchProgressOnly(url, total, signal) {
+  const res = await fetch(url, { signal });
+  if (!res.ok || !res.body) return;
+  const reader = res.body.getReader();
+  let received = 0;
+  prefetchState.active = true;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.length;
+    if (total) setPrefetchPercent((received / total) * 100);
+  }
+  prefetchState.active = false;
+  setPrefetchPercent(100);
+}
+
+async function startFullPrefetch(url, signal) {
+  let total = 0;
+  try {
+    const head = await fetch(url, { method: 'HEAD', signal });
+    total = +(head.headers.get('content-length') || 0);
+  } catch (_) {}
+
+  prefetchState.url = url;
+  try {
+    if (await hasOpfs()) {
+      await prefetchToOpfs(url, total, signal);
+      return;
+    }
+    if (!total || total <= MAX_BLOB_CACHE) {
+      await prefetchToBlob(url, total, signal);
+      return;
+    }
+    await prefetchProgressOnly(url, total, signal);
+  } catch (err) {
+    if (err.name !== 'AbortError') prefetchState.active = false;
+  }
 }
 
 async function loadProgressive(url) {
-  if (prefetchController) prefetchController.abort();
+  resetPrefetch();
   prefetchController = new AbortController();
   const signal = prefetchController.signal;
   video.preload = 'auto';
   video.src = url;
   video.addEventListener('canplay', () => tryPlay(), { once: true });
-  try {
-    const head = await fetch(url, { method: 'HEAD', signal });
-    const len = +(head.headers.get('content-length') || 0);
-    if (len && len <= MAX_BLOB_CACHE) prefetchToBlob(url, len, signal);
-  } catch (_) {}
+  startFullPrefetch(url, signal);
 }
 
 function loadSource(url, type = 'progressive') {
   destroyHls();
   destroyDash();
-  if (prefetchController) prefetchController.abort();
-  if (prefetchBlobUrl) {
-    URL.revokeObjectURL(prefetchBlobUrl);
-    prefetchBlobUrl = null;
-  }
+  resetPrefetch();
   video.removeAttribute('src');
   video.load();
 
   if (type === 'dash' && typeof dashjs !== 'undefined') {
     dashPlayer = dashjs.MediaPlayer().create();
+    dashPlayer.updateSettings({
+      streaming: {
+        buffer: {
+          bufferTimeAtTopQuality: HLS_MAX_BUFFER_SEC,
+          bufferTimeAtTopQualityLongForm: HLS_MAX_BUFFER_SEC,
+          bufferTimeAtTopQualityMobile: 3600,
+          longFormContentDurationThreshold: 600,
+          stableBufferTime: 60,
+        },
+        gaps: { jumpGaps: true },
+      },
+    });
     dashPlayer.initialize(video, url, true);
     video.addEventListener('canplay', () => tryPlay(), { once: true });
+    dashPlayer.on(dashjs.MediaPlayer.events.BUFFER_LEVEL_UPDATED, () => updateBufferBar());
   } else if (type === 'hls' && typeof Hls !== 'undefined' && Hls.isSupported()) {
     hls = new Hls({
       enableWorker: true,
-      maxBufferLength: 300,
-      maxMaxBufferLength: 600,
-      backBufferLength: 120,
+      maxBufferLength: 600,
+      maxMaxBufferLength: HLS_MAX_BUFFER_SEC,
+      maxBufferSize: 16 * 1024 * 1024 * 1024,
+      backBufferLength: 300,
       progressive: true,
+      startFragPrefetch: true,
     });
     hls.loadSource(url);
     hls.attachMedia(video);
     hls.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
+    hls.on(Hls.Events.BUFFER_APPENDED, () => updateBufferBar());
+    hls.on(Hls.Events.FRAG_BUFFERED, () => updateBufferBar());
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (data.fatal) toast('Stream error — try MPV or another quality', 4000);
     });
@@ -491,8 +602,7 @@ function updateProgress() {
   timeCurrent.textContent = fmtTime(video.currentTime);
   timeTotal.textContent = fmtTime(dur);
 
-  const bufPct = getBufferedPercent();
-  if (bufPct) progressBuffered.style.width = bufPct + '%';
+  updateBufferBar();
 
   if (abPointA !== null && abPointB !== null && dur) {
     const aPct = (abPointA / dur) * 100;
@@ -1544,10 +1654,7 @@ video.addEventListener('error', () => {
   toast('Video error: ' + (codes[err?.code] || 'Unknown') + ' — try MPV or another quality', 6000);
 });
 
-video.addEventListener('progress', () => {
-  const bufPct = getBufferedPercent();
-  if (bufPct) progressBuffered.style.width = bufPct + '%';
-});
+video.addEventListener('progress', () => updateBufferBar());
 
 video.addEventListener('waiting', () => { nowPlaying.textContent = (currentMedia?.title || 'Buffering') + '…'; });
 video.addEventListener('playing', () => { nowPlaying.textContent = currentMedia?.title || 'Playing'; });
