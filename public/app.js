@@ -1086,7 +1086,7 @@ function handlePlaybackError(context, err) {
 }
 
 function isModernBridge(data) {
-  return !!data?.ok && data.resolve === true;
+  return !!data?.ok && data.resolve === true && (data.version || 0) >= 2;
 }
 
 async function isLocalBridgeAvailable() {
@@ -1157,7 +1157,12 @@ async function resolveViaLocalBridge(url) {
       retriable: true,
     }, 502);
   }
-  return { ...data, stream_url: streamUrl, source_url: data.source_url || data.sourceUrl || url };
+  return {
+    ...data,
+    stream_url: streamUrl,
+    source_url: data.source_url || data.sourceUrl || url,
+    play_url: data.play_url || data.playUrl || null,
+  };
 }
 
 function applyPlayback(info, resumePos = 0) {
@@ -1191,21 +1196,37 @@ async function playViaLocalBridge(url, formatId = null, resumePos = 0) {
   }
   toast('Cloud blocked — resolving on your PC...', 8000);
   const resolved = await resolveViaLocalBridge(url);
-  const info = await api('/api/play/local', {
-    method: 'POST',
-    body: JSON.stringify({
+  let info;
+  try {
+    info = await api('/api/play/local', {
+      method: 'POST',
+      body: JSON.stringify({
+        source_url: resolved.source_url || url,
+        stream_url: resolved.stream_url,
+        title: resolved.title,
+        thumbnail: resolved.thumbnail,
+        duration: resolved.duration,
+        site: resolved.site,
+        headers: resolved.headers || {},
+        stream_type: resolved.stream_type || 'progressive',
+        content_type: resolved.content_type,
+        resolved_with: resolved.resolved_with || 'local-bridge',
+      }),
+    });
+  } catch (_) {
+    info = {
+      type: 'video',
+      title: resolved.title || 'Video',
       source_url: resolved.source_url || url,
-      stream_url: resolved.stream_url,
-      title: resolved.title,
-      thumbnail: resolved.thumbnail,
-      duration: resolved.duration,
-      site: resolved.site,
-      headers: resolved.headers || {},
       stream_type: resolved.stream_type || 'progressive',
-      content_type: resolved.content_type,
-      resolved_with: resolved.resolved_with || 'local-bridge',
-    }),
-  });
+      formats: [],
+      subtitles: [],
+    };
+  }
+  if (resolved.play_url) {
+    info.play_url = resolved.play_url;
+    info.stream_type = resolved.stream_type || info.stream_type || 'progressive';
+  }
   applyPlayback(info, resumePos);
   toast('Playing via local bridge: ' + (info.title || 'media'), 5000);
 }
