@@ -161,8 +161,8 @@ async function tryPlay() {
     await video.play();
     return true;
   } catch (err) {
-    toast('Playback blocked — click the video or ▶ button to start', 5000);
-    $('#toggle-btn').textContent = '▶';
+    toast('Playback blocked — tap the video or play button', 5000);
+    setPlayPauseIcon(false);
     return false;
   }
 }
@@ -177,6 +177,7 @@ function setVolume(val) {
     video.volume = Math.min(v, 1);
   }
   video.muted = v === 0;
+  setMuteIcon(video.muted);
 }
 
 function getLocalLibrary() {
@@ -534,6 +535,94 @@ function setMeta(info) {
   refreshFavoriteState();
 }
 
+function setPlayPauseIcon(playing) {
+  const btn = $('#toggle-btn');
+  if (!btn) return;
+  btn.querySelector('.ico-play')?.toggleAttribute('hidden', playing);
+  btn.querySelector('.ico-pause')?.toggleAttribute('hidden', !playing);
+  btn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+}
+
+function setMuteIcon(muted) {
+  const btn = $('#mute-btn');
+  if (!btn) return;
+  btn.querySelector('.ico-vol')?.toggleAttribute('hidden', muted);
+  btn.querySelector('.ico-muted')?.toggleAttribute('hidden', !muted);
+}
+
+function setFullscreenIcon(isFs) {
+  const btn = $('#fs-btn');
+  if (!btn) return;
+  btn.querySelector('.ico-enter-fs')?.toggleAttribute('hidden', isFs);
+  btn.querySelector('.ico-exit-fs')?.toggleAttribute('hidden', !isFs);
+}
+
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+function syncMenuSelects() {
+  const pairs = [
+    [qualitySelect, $('#menu-quality')],
+    [subtitleSelect, $('#menu-subtitle')],
+    [speedSelect, $('#menu-speed')],
+    [$('#fit-select'), $('#menu-fit')],
+  ];
+  pairs.forEach(([from, to]) => {
+    if (!from || !to) return;
+    to.innerHTML = from.innerHTML;
+    to.value = from.value;
+  });
+}
+
+function syncMenuActionStates() {
+  ['loop-btn', 'shuffle-btn', 'repeat-btn', 'ab-btn', 'fav-btn'].forEach((id) => {
+    const src = $(`#${id}`);
+    const tile = document.querySelector(`[data-trigger="${id}"]`);
+    if (src && tile) tile.classList.toggle('active', src.classList.contains('active'));
+  });
+}
+
+function initPlayerMenu() {
+  const speeds = ['0.25', '0.5', '0.75', '1', '1.25', '1.5', '1.75', '2', '3', '4'];
+  if (speedSelect.options.length < 5) {
+    speedSelect.innerHTML = speeds.map((s) => `<option value="${s}">${s}×</option>`).join('');
+    speedSelect.value = '1';
+  }
+
+  const bindMenuSelect = (menuId, target) => {
+    const menu = $(menuId);
+    if (!menu || !target) return;
+    menu.addEventListener('change', () => {
+      target.value = menu.value;
+      target.dispatchEvent(new Event('change'));
+    });
+  };
+
+  syncMenuSelects();
+  bindMenuSelect('#menu-quality', qualitySelect);
+  bindMenuSelect('#menu-subtitle', subtitleSelect);
+  bindMenuSelect('#menu-speed', speedSelect);
+  bindMenuSelect('#menu-fit', $('#fit-select'));
+
+  $('#player-menu-btn')?.addEventListener('click', () => {
+    syncMenuSelects();
+    syncMenuActionStates();
+    $('#player-menu-dialog')?.showModal();
+  });
+
+  $$('[data-close-dialog]').forEach((btn) => {
+    btn.addEventListener('click', () => btn.closest('dialog')?.close());
+  });
+
+  $$('[data-trigger]').forEach((tile) => {
+    tile.addEventListener('click', () => {
+      $(`#${tile.dataset.trigger}`)?.click();
+      syncMenuActionStates();
+    });
+  });
+}
+
 function populateFormats(formats, selected) {
   qualitySelect.innerHTML = '<option value="">Auto quality</option>';
   formats.forEach((f) => {
@@ -543,6 +632,7 @@ function populateFormats(formats, selected) {
     if (f.format_id === selected) opt.selected = true;
     qualitySelect.appendChild(opt);
   });
+  syncMenuSelects();
 }
 
 function populateSubtitles(subs) {
@@ -553,6 +643,7 @@ function populateSubtitles(subs) {
     opt.textContent = s.name || s.lang;
     subtitleSelect.appendChild(opt);
   });
+  syncMenuSelects();
 }
 
 /* ── Seek / progress bar ── */
@@ -1528,8 +1619,10 @@ function updateFavoriteButtons(isFav) {
   $('#fav-btn')?.classList.toggle('active', on);
   $('#meta-fav-btn')?.classList.toggle('active', on);
   if ($('#meta-fav-btn')) {
-    $('#meta-fav-btn').textContent = on ? '★ Favorited' : '★ Favorite';
+    $('#meta-fav-btn').textContent = on ? 'Favorited' : 'Favorite';
+    $('#meta-fav-btn').classList.toggle('active', on);
   }
+  syncMenuActionStates();
 }
 
 async function refreshFavoriteState() {
@@ -1677,12 +1770,14 @@ $('#loop-btn').addEventListener('click', () => {
 $('#shuffle-btn').addEventListener('click', () => {
   shuffleQueue = !shuffleQueue;
   $('#shuffle-btn').classList.toggle('active', shuffleQueue);
+  syncMenuActionStates();
   toast(shuffleQueue ? 'Shuffle on' : 'Shuffle off');
 });
 
 $('#repeat-btn').addEventListener('click', () => {
   repeatQueue = !repeatQueue;
   $('#repeat-btn').classList.toggle('active', repeatQueue);
+  syncMenuActionStates();
   toast(repeatQueue ? 'Repeat queue on' : 'Repeat queue off');
 });
 
@@ -1690,8 +1785,8 @@ $('#ab-btn').addEventListener('click', toggleAbLoop);
 $('#screenshot-btn').addEventListener('click', takeScreenshot);
 $('#refresh-library-btn')?.addEventListener('click', refreshLibrary);
 
-video.addEventListener('play', () => { $('#toggle-btn').textContent = '⏸'; });
-video.addEventListener('pause', () => { $('#toggle-btn').textContent = '▶'; });
+video.addEventListener('play', () => setPlayPauseIcon(true));
+video.addEventListener('pause', () => setPlayPauseIcon(false));
 video.addEventListener('timeupdate', () => { updateProgress(); scheduleProgressSave(); });
 video.addEventListener('ended', () => {
   if (loopVideo) return;
@@ -1711,9 +1806,7 @@ video.addEventListener('click', () => {
 video.addEventListener('dblclick', (e) => {
   e.preventDefault();
   clearTimeout(videoClickTimer);
-  const wrap = $('#player-wrap');
-  if (document.fullscreenElement) document.exitFullscreen();
-  else wrap.requestFullscreen();
+  toggleFullscreen();
 });
 
 video.addEventListener('error', () => {
@@ -1729,7 +1822,7 @@ video.addEventListener('playing', () => { nowPlaying.textContent = currentMedia?
 
 $('#mute-btn').addEventListener('click', () => {
   video.muted = !video.muted;
-  $('#mute-btn').textContent = video.muted ? '🔇' : '🔊';
+  setMuteIcon(video.muted);
 });
 
 $('#volume-slider').addEventListener('input', (e) => setVolume(+e.target.value));
@@ -1801,9 +1894,37 @@ async function togglePip() {
   } catch (_) { toast('PiP not available'); }
 }
 
-function toggleFullscreen() {
+async function toggleFullscreen() {
   const wrap = $('#player-wrap');
-  document.fullscreenElement ? document.exitFullscreen() : wrap.requestFullscreen();
+  const v = video;
+
+  if (isFullscreen()) {
+    try {
+      await (document.exitFullscreen?.() || document.webkitExitFullscreen?.());
+    } catch (_) {}
+    return;
+  }
+
+  if (typeof v.webkitEnterFullscreen === 'function') {
+    try {
+      v.webkitEnterFullscreen();
+      return;
+    } catch (_) {}
+  }
+
+  try {
+    if (v.requestFullscreen) {
+      await v.requestFullscreen();
+      return;
+    }
+  } catch (_) {}
+
+  try {
+    if (wrap.requestFullscreen) await wrap.requestFullscreen();
+    else if (wrap.webkitRequestFullscreen) wrap.webkitRequestFullscreen();
+  } catch (_) {
+    toast('Fullscreen not supported on this device', 3500);
+  }
 }
 
 $('#pip-btn').addEventListener('click', () => togglePip());
@@ -1816,11 +1937,12 @@ $$('.fit-btn').forEach((btn) => {
   btn.addEventListener('click', () => setFitMode(btn.dataset.fit));
 });
 
-document.addEventListener('fullscreenchange', () => {
-  const fs = !!document.fullscreenElement;
-  $('#fs-fit-bar').style.display = 'none';
-  const fitSelect = $('#fit-select');
-  if (fitSelect) fitSelect.style.display = fs ? 'none' : '';
+['fullscreenchange', 'webkitfullscreenchange'].forEach((evt) => {
+  document.addEventListener(evt, () => {
+    const fs = isFullscreen();
+    setFullscreenIcon(fs);
+    $('#fs-fit-bar').style.display = 'none';
+  });
 });
 
 $('#clear-queue-btn').addEventListener('click', async () => {
@@ -1963,6 +2085,10 @@ $('#player-wrap').addEventListener('mousemove', () => {
 
 /* Init */
 setFitMode(fitMode);
+setPlayPauseIcon(false);
+setMuteIcon(false);
+setFullscreenIcon(false);
+initPlayerMenu();
 connectWs();
 initStatus();
 initSettings();

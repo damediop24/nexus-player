@@ -2,75 +2,68 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#09090b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Nexus Player</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js"></script>
 </head>
 <body>
   <div class="app">
-    <header class="topbar">
-      <div class="topbar-row topbar-row-head">
-        <div class="brand">
-          <span class="brand-icon">▶</span>
-          <span class="brand-name">Nexus</span>
-          <span class="brand-badge">PRO</span>
-        </div>
-        <div class="topbar-head-actions">
-          <button id="sidebar-toggle" class="btn btn-ghost btn-icon only-mobile" type="button" title="Library" aria-label="Library">☰</button>
-          <button id="loop-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Loop (R)">🔁</button>
-          <button id="shuffle-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Shuffle queue">🔀</button>
-          <button id="screenshot-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Screenshot (S)">📷</button>
-          <button id="mpv-btn" class="btn btn-ghost btn-icon" type="button" title="Open in local MPV">MPV</button>
-          <button id="pip-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Picture-in-Picture">PiP</button>
-          <button id="fs-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Fullscreen">⛶</button>
-        </div>
+    <header class="shell-header">
+      <button id="sidebar-toggle" class="icon-btn" type="button" title="Library" aria-label="Open library">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="brand">
+        <span class="brand-mark">N</span>
+        <span class="brand-text">Nexus</span>
       </div>
-      <div class="topbar-row topbar-row-play">
-        <div class="url-bar">
-          <input id="url-input" type="text" placeholder="Paste URL or magnet..." spellcheck="false" />
-          <button id="play-btn" class="btn btn-accent" type="button">Play</button>
-          <button id="torrent-add-btn" class="btn btn-ghost btn-icon" type="button" title="Add magnet">🧲</button>
-          <button id="resolve-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Inspect formats">⋯</button>
-        </div>
+      <div class="search-bar">
+        <input id="url-input" type="url" inputmode="url" placeholder="Paste URL or magnet link…" spellcheck="false" autocomplete="off" />
+        <button id="play-btn" class="btn-primary" type="button">Play</button>
       </div>
+      <button id="player-menu-btn" class="icon-btn" type="button" title="Options" aria-label="Player options">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg>
+      </button>
     </header>
 
     <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
-    <div class="main">
-      <section class="player-section">
-        <div class="player-wrap" id="player-wrap">
+
+    <div class="shell-body">
+      <section class="theater">
+        <div class="player" id="player-wrap">
           <div class="video-stage" id="video-stage">
-            <video id="video" playsinline preload="auto"></video>
+            <video id="video" playsinline webkit-playsinline x-webkit-airplay="allow" preload="auto"></video>
           </div>
 
           <div class="fs-fit-bar" id="fs-fit-bar">
-            <span class="fs-fit-label">Display</span>
-            <button class="fit-btn active" data-fit="contain" type="button" title="Fit — show full video">Fit</button>
-            <button class="fit-btn" data-fit="cover" type="button" title="Crop — fill screen">Crop</button>
-            <button class="fit-btn" data-fit="fill" type="button" title="Stretch — fill screen">Stretch</button>
-            <button class="fit-btn" data-fit="none" type="button" title="Original size">Original</button>
+            <button class="fit-btn active" data-fit="contain" type="button">Fit</button>
+            <button class="fit-btn" data-fit="cover" type="button">Fill</button>
+            <button class="fit-btn" data-fit="fill" type="button">Stretch</button>
+            <button class="fit-btn" data-fit="none" type="button">1:1</button>
           </div>
+
           <div id="player-overlay" class="player-overlay">
             <div class="overlay-center" id="overlay-center">
               <div class="drop-zone" id="drop-zone">
-                <div class="drop-icon">⬇</div>
-                <p>Drop URL or video file here</p>
-                <span class="hint">YouTube · Magnets · .torrent · PikPak · Stremio · 1800+ sites</span>
+                <div class="drop-icon">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l4-4m-4 4L8 11M4 21h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+                </div>
+                <p>Drop a link or file to play</p>
+                <span class="hint">YouTube · torrents · PikPak · 1800+ sites</span>
               </div>
             </div>
           </div>
 
-          <div class="seek-preview" id="seek-preview">
-            <span id="seek-preview-time">0:00</span>
-          </div>
+          <div class="seek-preview" id="seek-preview"><span id="seek-preview-time">0:00</span></div>
 
-          <div class="controls" id="controls">
-            <div class="progress-wrap" id="progress-wrap">
+          <div class="player-ui" id="controls">
+            <div class="ui-progress" id="progress-wrap">
               <div class="progress-hitarea" id="progress-hitarea">
                 <div class="progress-bar" id="progress-bar">
                   <div class="progress-buffered" id="progress-buffered"></div>
@@ -83,168 +76,145 @@
               </div>
               <div class="time-display">
                 <span id="time-current">0:00</span>
-                <span>/</span>
+                <span class="time-sep">/</span>
                 <span id="time-total">0:00</span>
               </div>
             </div>
 
-            <div class="controls-primary">
-              <div class="transport">
-                <button class="ctrl-btn" id="prev-btn" title="Previous">⏮</button>
-                <button class="ctrl-btn ctrl-btn-lg" id="toggle-btn" title="Play/Pause">▶</button>
-                <button class="ctrl-btn" id="next-btn" title="Next">⏭</button>
+            <div class="ui-toolbar">
+              <div class="ui-group ui-group-left">
+                <button class="icon-btn ghost" id="prev-btn" type="button" title="Previous" aria-label="Previous">
+                  <svg viewBox="0 0 24 24"><path d="M6 6v12l8-6-8-6zm10 0v12h2V6h-2z" fill="currentColor"/></svg>
+                </button>
+                <button class="icon-btn ghost play-toggle" id="toggle-btn" type="button" title="Play/Pause" aria-label="Play">
+                  <svg class="ico-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5z" fill="currentColor"/></svg>
+                  <svg class="ico-pause" viewBox="0 0 24 24" hidden><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" fill="currentColor"/></svg>
+                </button>
+                <button class="icon-btn ghost" id="next-btn" type="button" title="Next" aria-label="Next">
+                  <svg viewBox="0 0 24 24"><path d="M18 18V6l-8 6 8 6zM4 6v12h2V6H4z" fill="currentColor"/></svg>
+                </button>
               </div>
-              <div class="volume-wrap">
-                <button class="ctrl-btn" id="mute-btn" title="Mute">🔊</button>
-                <input type="range" id="volume-slider" min="0" max="200" value="100" />
-              </div>
-              <span class="now-playing" id="now-playing">No media loaded</span>
-              <div class="player-quick-actions only-mobile">
-                <button class="ctrl-btn" id="mobile-pip-btn" type="button" title="Picture-in-Picture">⊡</button>
-                <button class="ctrl-btn" id="mobile-fs-btn" type="button" title="Fullscreen">⛶</button>
-              </div>
-            </div>
 
-            <div class="controls-secondary">
-              <div class="controls-chips">
-                <select id="quality-select" class="ctrl-select" title="Quality">
-                  <option value="">Quality</option>
-                </select>
-                <select id="subtitle-select" class="ctrl-select" title="Subtitles">
-                  <option value="">Subs</option>
-                </select>
-                <select id="fit-select" class="ctrl-select" title="Display mode (V)">
-                  <option value="contain" selected>Fit</option>
-                  <option value="cover">Crop</option>
-                  <option value="fill">Stretch</option>
-                  <option value="none">Original</option>
-                </select>
-                <select id="speed-select" class="ctrl-select" title="Speed">
-                  <option value="0.25">0.25×</option>
-                  <option value="0.5">0.5×</option>
-                  <option value="0.75">0.75×</option>
-                  <option value="1" selected>1×</option>
-                  <option value="1.25">1.25×</option>
-                  <option value="1.5">1.5×</option>
-                  <option value="1.75">1.75×</option>
-                  <option value="2">2×</option>
-                  <option value="3">3×</option>
-                  <option value="4">4×</option>
-                </select>
-              </div>
-              <div class="controls-tools">
-                <button class="ctrl-btn" id="ab-btn" title="A-B Loop">A-B</button>
-                <button class="ctrl-btn" id="fav-btn" title="Favorite">★</button>
-                <button class="ctrl-btn" id="playlist-btn" title="Playlist">+♫</button>
-                <button class="ctrl-btn" id="download-btn" title="Download">↓</button>
-                <button class="ctrl-btn" id="repeat-btn" title="Repeat">↻</button>
-                <button class="ctrl-btn only-mobile" id="mobile-more-btn" type="button" title="More actions">⋯</button>
+              <p class="ui-title" id="now-playing">No media loaded</p>
+
+              <div class="ui-group ui-group-right">
+                <div class="volume-wrap">
+                  <button class="icon-btn ghost" id="mute-btn" type="button" title="Mute" aria-label="Mute">
+                    <svg class="ico-vol" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4V5zm4.73 2.56a1 1 0 011.42 1.4L13.41 12l3.74 4.04a1 1 0 11-1.42 1.4L11.3 12.7a1 1 0 010-1.4l4.43-4.74z" fill="currentColor"/></svg>
+                    <svg class="ico-muted" viewBox="0 0 24 24" hidden><path d="M3.63 3.63a1 1 0 011.42 0L12 10.58l7.05-7.05a1 1 0 111.42 1.42L13.42 12l7.05 7.05a1 1 0 11-1.42 1.42L12 13.42l-7.05 7.05a1 1 0 11-1.42-1.42L10.58 12 3.53 4.95a1 1 0 010-1.42z" fill="currentColor"/></svg>
+                  </button>
+                  <input type="range" id="volume-slider" min="0" max="200" value="100" aria-label="Volume" />
+                </div>
+                <button class="icon-btn ghost" id="pip-btn" type="button" title="Picture in Picture" aria-label="Picture in Picture">
+                  <svg viewBox="0 0 24 24"><path d="M19 7H5a2 2 0 00-2 2v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2zm0 12H5V9h14v10zM15 13h4v4h-4v-4z" fill="currentColor"/></svg>
+                </button>
+                <button class="icon-btn ghost" id="fs-btn" type="button" title="Fullscreen" aria-label="Fullscreen">
+                  <svg class="ico-enter-fs" viewBox="0 0 24 24"><path d="M7 7h4V5H5v6h2V7zm10 0v4h2V5h-6v2h4zM7 17v-4H5v6h6v-2H7zm10 0h-4v2h6v-6h-2v4z" fill="currentColor"/></svg>
+                  <svg class="ico-exit-fs" viewBox="0 0 24 24" hidden><path d="M9 9H5v4h2V9h2zm6 0v2h2V5h-4v4h2zM9 15H7v2H5v-4h4v2zm6 0h2v4h-4v-2h2v-2z" fill="currentColor"/></svg>
+                </button>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="meta-panel" id="meta-panel">
-          <div class="meta-thumb" id="meta-thumb"></div>
-          <div class="meta-info">
+        <div class="info-strip" id="meta-panel">
+          <div class="info-thumb" id="meta-thumb"></div>
+          <div class="info-body">
             <h2 id="meta-title">—</h2>
             <p id="meta-details"></p>
             <div id="cloud-status" class="cloud-status hidden">
               <div class="cloud-status-text" id="cloud-status-text"></div>
               <div class="torrent-progress"><div class="torrent-progress-bar" id="cloud-progress-bar"></div></div>
             </div>
-            <div class="meta-actions">
-              <button id="meta-fav-btn" class="btn btn-sm" type="button" title="Add to favorites">★ Favorite</button>
-              <button id="meta-playlist-btn" class="btn btn-sm btn-ghost" type="button" title="Add to playlist">+ Playlist</button>
-              <button id="meta-mpv-btn" class="btn btn-sm btn-ghost" type="button" title="Open in local MPV">▶ MPV</button>
-            </div>
+          </div>
+          <div class="info-actions">
+            <button id="meta-fav-btn" class="chip-btn" type="button">Favorite</button>
+            <button id="meta-playlist-btn" class="chip-btn ghost" type="button">Playlist</button>
+            <button id="meta-mpv-btn" class="chip-btn ghost" type="button">MPV</button>
           </div>
         </div>
       </section>
 
-      <aside class="sidebar" id="sidebar">
-        <div class="sidebar-handle only-mobile"></div>
-        <nav class="tabs">
-          <button class="tab active" data-tab="queue">Queue</button>
-          <button class="tab" data-tab="history">History</button>
-          <button class="tab" data-tab="favorites">Favorites</button>
-          <button class="tab" data-tab="playlists">Playlists</button>
-          <button class="tab" data-tab="downloads">Downloads</button>
-          <button class="tab" data-tab="library">Library</button>
-          <button class="tab" data-tab="torrents">Torrents</button>
+      <aside class="library" id="sidebar">
+        <div class="library-handle" aria-hidden="true"></div>
+        <header class="library-head">
+          <h2>Library</h2>
+        </header>
+        <nav class="tabs" role="tablist">
+          <button class="tab active" data-tab="queue" type="button">Queue</button>
+          <button class="tab" data-tab="history" type="button">History</button>
+          <button class="tab" data-tab="favorites" type="button">Saved</button>
+          <button class="tab" data-tab="playlists" type="button">Lists</button>
+          <button class="tab" data-tab="downloads" type="button">Files</button>
+          <button class="tab" data-tab="library" type="button">Sync</button>
+          <button class="tab" data-tab="torrents" type="button">Cloud</button>
         </nav>
 
         <div class="tab-panel active" id="panel-queue">
           <div class="panel-actions">
-            <button class="btn btn-sm" id="batch-btn" type="button">Batch paste</button>
-            <button class="btn btn-sm btn-ghost" id="clear-queue-btn" type="button">Clear</button>
+            <button class="chip-btn" id="batch-btn" type="button">Batch</button>
+            <button class="chip-btn ghost" id="clear-queue-btn" type="button">Clear</button>
           </div>
           <ul class="item-list" id="queue-list"></ul>
         </div>
-
         <div class="tab-panel" id="panel-history">
           <div class="panel-actions">
-            <button class="btn btn-sm btn-ghost" id="clear-history-btn" type="button">Clear all</button>
+            <button class="chip-btn ghost" id="clear-history-btn" type="button">Clear all</button>
           </div>
           <ul class="item-list" id="history-list"></ul>
         </div>
-
         <div class="tab-panel" id="panel-favorites">
           <ul class="item-list" id="favorites-list"></ul>
         </div>
-
         <div class="tab-panel" id="panel-playlists">
           <div class="panel-actions">
-            <button class="btn btn-sm" id="new-playlist-btn" type="button">+ Playlist</button>
+            <button class="chip-btn" id="new-playlist-btn" type="button">New list</button>
           </div>
           <div id="playlists-container"></div>
         </div>
-
         <div class="tab-panel" id="panel-downloads">
           <ul class="item-list" id="downloads-list"></ul>
         </div>
-
         <div class="tab-panel" id="panel-library">
           <div class="panel-actions">
-            <button class="btn btn-sm btn-ghost" id="refresh-library-btn" type="button">Refresh</button>
+            <button class="chip-btn ghost" id="refresh-library-btn" type="button">Refresh</button>
           </div>
           <ul class="item-list" id="library-list"></ul>
         </div>
-
         <div class="tab-panel" id="panel-torrents">
-          <div class="pikpak-box" id="pikpak-box">
-            <div class="pikpak-title">PikPak Cloud (optional)</div>
-            <p class="pikpak-hint">Streams torrents via your PikPak account — faster, works online.</p>
-            <input id="pikpak-user" type="text" placeholder="PikPak email" autocomplete="username" />
-            <input id="pikpak-pass" type="password" placeholder="PikPak password" autocomplete="current-password" />
+          <div class="settings-card" id="pikpak-box">
+            <h3>PikPak</h3>
+            <p class="card-hint">Optional cloud streaming for magnets.</p>
+            <input id="pikpak-user" type="text" placeholder="Email" autocomplete="username" />
+            <input id="pikpak-pass" type="password" placeholder="Password" autocomplete="current-password" />
             <div class="panel-actions">
-              <button class="btn btn-sm" id="pikpak-save-btn" type="button">Save &amp; Login</button>
-              <label class="pikpak-toggle"><input id="pikpak-enabled" type="checkbox" checked /> Use PikPak</label>
+              <button class="chip-btn" id="pikpak-save-btn" type="button">Connect</button>
+              <label class="check-label"><input id="pikpak-enabled" type="checkbox" checked /> Enabled</label>
             </div>
-            <div class="pikpak-status" id="pikpak-status">Not configured</div>
+            <div class="status-pill" id="pikpak-status">Not configured</div>
           </div>
-          <div class="pikpak-box mpv-box" id="mpv-box">
-            <div class="pikpak-title">Local MPV bridge</div>
-            <p class="pikpak-hint">Run <code>start-mpv-bridge.vbs</code> or <code>install-mpv-bridge-startup.vbs</code> once. Needed for MPV and for sites that block cloud servers (resolved on your PC).</p>
+          <div class="settings-card" id="mpv-box">
+            <h3>MPV Bridge</h3>
+            <p class="card-hint">Run <code>start-mpv-bridge.vbs</code> on your PC for MPV and blocked sites.</p>
             <input id="mpv-path" type="text" placeholder="C:\mpv\mpv\mpv.exe" spellcheck="false" />
             <div class="panel-actions">
-              <button class="btn btn-sm" id="mpv-save-path-btn" type="button">Save path</button>
-              <button class="btn btn-sm btn-ghost" id="mpv-test-btn" type="button">Test MPV</button>
+              <button class="chip-btn" id="mpv-save-path-btn" type="button">Save</button>
+              <button class="chip-btn ghost" id="mpv-test-btn" type="button">Test</button>
             </div>
-            <div class="pikpak-status" id="mpv-bridge-status">Bridge not detected — run start-mpv-bridge.vbs</div>
+            <div class="status-pill" id="mpv-bridge-status">Bridge offline</div>
           </div>
           <div class="panel-actions">
-            <button class="btn btn-sm" id="torrent-paste-btn" type="button">Add magnet</button>
-            <label class="btn btn-sm btn-ghost torrent-file-btn">Add .torrent<input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden /></label>
-            <button class="btn btn-sm btn-ghost" id="refresh-torrents-btn" type="button">Refresh</button>
+            <button class="chip-btn" id="torrent-paste-btn" type="button">Magnet</button>
+            <label class="chip-btn ghost torrent-file-btn">Torrent<input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden /></label>
+            <button class="chip-btn ghost" id="refresh-torrents-btn" type="button">Refresh</button>
           </div>
           <ul class="torrent-list" id="torrent-list"></ul>
         </div>
 
-        <footer class="sidebar-footer">
+        <footer class="library-foot">
           <div class="status-line">
             <span id="status-dot" class="status-dot"></span>
-            <span id="status-text">Connecting...</span>
+            <span id="status-text">Connecting…</span>
           </div>
           <div class="remote-url" id="remote-url" title="Remote control URL"></div>
         </footer>
@@ -252,40 +222,103 @@
     </div>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status"></div>
 
-  <dialog id="batch-dialog">
+  <!-- Hidden controls kept for app.js + menu triggers -->
+  <button id="loop-btn" type="button" hidden></button>
+  <button id="shuffle-btn" type="button" hidden></button>
+  <button id="screenshot-btn" type="button" hidden></button>
+  <button id="mpv-btn" type="button" hidden></button>
+  <button id="torrent-add-btn" type="button" hidden></button>
+  <button id="resolve-btn" type="button" hidden></button>
+  <button id="mobile-fs-btn" type="button" hidden></button>
+  <button id="mobile-pip-btn" type="button" hidden></button>
+  <button id="mobile-more-btn" type="button" hidden></button>
+  <button id="fav-btn" type="button" hidden></button>
+  <button id="playlist-btn" type="button" hidden></button>
+  <button id="download-btn" type="button" hidden></button>
+  <button id="repeat-btn" type="button" hidden></button>
+  <button id="ab-btn" type="button" hidden></button>
+  <select id="quality-select" hidden><option value="">Auto</option></select>
+  <select id="subtitle-select" hidden><option value="">Off</option></select>
+  <select id="fit-select" hidden><option value="contain" selected>Fit</option><option value="cover">Fill</option><option value="fill">Stretch</option><option value="none">1:1</option></select>
+  <select id="speed-select" hidden><option value="1" selected>1×</option></select>
+
+  <dialog id="player-menu-dialog" class="sheet-dialog">
+    <header class="sheet-head">
+      <h3>Player options</h3>
+      <button class="icon-btn ghost sheet-close" type="button" data-close-dialog aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <div class="sheet-body">
+      <section class="sheet-section">
+        <h4>Stream</h4>
+        <div class="field-row">
+          <label>Quality<select id="menu-quality"></select></label>
+          <label>Subtitles<select id="menu-subtitle"></select></label>
+        </div>
+        <div class="field-row">
+          <label>Speed<select id="menu-speed"></select></label>
+          <label>Display<select id="menu-fit"></select></label>
+        </div>
+      </section>
+      <section class="sheet-section">
+        <h4>Actions</h4>
+        <div class="action-grid">
+          <button type="button" class="action-tile" data-trigger="fav-btn">Favorite</button>
+          <button type="button" class="action-tile" data-trigger="playlist-btn">Playlist</button>
+          <button type="button" class="action-tile" data-trigger="download-btn">Download</button>
+          <button type="button" class="action-tile" data-trigger="mpv-btn">Open MPV</button>
+          <button type="button" class="action-tile" data-trigger="resolve-btn">Inspect</button>
+          <button type="button" class="action-tile" data-trigger="torrent-add-btn">Magnet</button>
+          <button type="button" class="action-tile" data-trigger="screenshot-btn">Screenshot</button>
+          <button type="button" class="action-tile" data-trigger="ab-btn">A‑B loop</button>
+        </div>
+      </section>
+      <section class="sheet-section">
+        <h4>Queue</h4>
+        <div class="action-grid action-grid-3">
+          <button type="button" class="action-tile" data-trigger="loop-btn">Loop</button>
+          <button type="button" class="action-tile" data-trigger="shuffle-btn">Shuffle</button>
+          <button type="button" class="action-tile" data-trigger="repeat-btn">Repeat</button>
+        </div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="batch-dialog" class="sheet-dialog">
     <form method="dialog">
-      <h3>Batch paste URLs</h3>
-      <p>One URL per line — all will be queued.</p>
-      <textarea id="batch-text" rows="8" placeholder="https://...\nhttps://..."></textarea>
-      <div class="dialog-actions">
-        <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
-        <button id="batch-submit" value="ok" class="btn btn-accent" type="submit">Queue all</button>
+      <header class="sheet-head"><h3>Batch queue</h3></header>
+      <p class="card-hint">One URL per line.</p>
+      <textarea id="batch-text" rows="8" placeholder="https://…"></textarea>
+      <div class="sheet-foot">
+        <button value="cancel" class="chip-btn ghost" type="submit">Cancel</button>
+        <button id="batch-submit" value="ok" class="btn-primary" type="submit">Queue all</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="torrent-dialog">
+  <dialog id="torrent-dialog" class="sheet-dialog">
     <form method="dialog">
-      <h3>Add magnet link</h3>
-      <textarea id="magnet-text" rows="4" placeholder="magnet:?xt=urn:btih:..."></textarea>
-      <div class="dialog-actions">
-        <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
-        <button id="magnet-submit" value="ok" class="btn btn-accent" type="submit">Add &amp; play</button>
+      <header class="sheet-head"><h3>Add magnet</h3></header>
+      <textarea id="magnet-text" rows="4" placeholder="magnet:?xt=urn:btih:…"></textarea>
+      <div class="sheet-foot">
+        <button value="cancel" class="chip-btn ghost" type="submit">Cancel</button>
+        <button id="magnet-submit" value="ok" class="btn-primary" type="submit">Add &amp; play</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="mpv-dialog">
-    <h3>Open in MPV</h3>
-    <p class="dialog-hint">Run <code>start-mpv-bridge.vbs</code> once on your PC (Torrents tab has auto-start installer).</p>
-    <div id="mpv-dialog-status" class="mpv-dialog-status">Preparing launch…</div>
-    <div class="dialog-actions mpv-dialog-actions">
-      <button id="mpv-dialog-close" class="btn btn-ghost" type="button">Close</button>
-      <a id="mpv-dialog-link" class="btn btn-accent" href="#" target="_blank" rel="noopener">Launch MPV</a>
-      <button id="mpv-dialog-form-btn" class="btn btn-sm btn-ghost" type="button" hidden>Launch (long URL)</button>
-      <button id="mpv-dialog-copy" class="btn btn-sm btn-ghost" type="button">Copy stream URL</button>
+  <dialog id="mpv-dialog" class="sheet-dialog">
+    <header class="sheet-head"><h3>Open in MPV</h3></header>
+    <p class="card-hint">Run <code>start-mpv-bridge.vbs</code> on your PC first.</p>
+    <div id="mpv-dialog-status" class="status-pill">Preparing…</div>
+    <div class="sheet-foot">
+      <button id="mpv-dialog-close" class="chip-btn ghost" type="button">Close</button>
+      <a id="mpv-dialog-link" class="btn-primary" href="#" target="_blank" rel="noopener">Launch</a>
+      <button id="mpv-dialog-form-btn" class="chip-btn ghost" type="button" hidden>Long URL</button>
+      <button id="mpv-dialog-copy" class="chip-btn ghost" type="button">Copy URL</button>
     </div>
     <form id="mpv-dialog-form" method="POST" action="http://127.0.0.1:9340/launch-form" target="_blank" hidden>
       <input type="hidden" name="url" id="mpv-form-url" />
@@ -294,24 +327,23 @@
     </form>
   </dialog>
 
-  <dialog id="playlist-dialog">
+  <dialog id="playlist-dialog" class="sheet-dialog">
     <form method="dialog">
-      <h3>Add to playlist</h3>
-      <p class="dialog-hint">Choose a playlist for the current video.</p>
+      <header class="sheet-head"><h3>Add to playlist</h3></header>
       <ul id="playlist-pick-list" class="playlist-pick-list"></ul>
-      <div class="dialog-actions">
-        <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
-        <button id="new-playlist-from-dialog" class="btn btn-sm btn-ghost" type="button">+ New playlist</button>
+      <div class="sheet-foot">
+        <button value="cancel" class="chip-btn ghost" type="submit">Cancel</button>
+        <button id="new-playlist-from-dialog" class="chip-btn ghost" type="button">New list</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="formats-dialog">
+  <dialog id="formats-dialog" class="sheet-dialog">
     <form method="dialog">
-      <h3>Available formats</h3>
+      <header class="sheet-head"><h3>Formats</h3></header>
       <div id="formats-list" class="formats-list"></div>
-      <div class="dialog-actions">
-        <button value="close" class="btn btn-ghost" type="submit">Close</button>
+      <div class="sheet-foot">
+        <button value="close" class="chip-btn ghost" type="submit">Close</button>
       </div>
     </form>
   </dialog>
