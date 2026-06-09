@@ -102,20 +102,65 @@ def _pick_impersonate_target(preferred=None):
     return available[0]
 
 
+def _browser_cookie_db(profile_root: Path, browser: str):
+    if not profile_root.is_dir():
+        return None
+
+    candidates = []
+    if browser in ('chrome', 'edge', 'brave', 'opera'):
+        candidates.extend([
+            profile_root / 'Default' / 'Cookies',
+            profile_root / 'Default' / 'Network' / 'Cookies',
+        ])
+        candidates.extend(profile_root.glob('Profile */Cookies'))
+        candidates.extend(profile_root.glob('Profile */Network/Cookies'))
+    elif browser == 'firefox':
+        if profile_root.name.lower() == 'profiles':
+            candidates.extend(profile_root.glob('*/cookies.sqlite'))
+        else:
+            candidates.extend(profile_root.glob('Profiles/*/cookies.sqlite'))
+
+    for path in candidates:
+        try:
+            if path.is_file() and path.stat().st_size > 0:
+                return path
+        except OSError:
+            continue
+    return None
+
+
 def _detect_browsers():
     found = []
-    local = Path.home() / 'AppData' / 'Local'
+    home = Path.home()
+    local = home / 'AppData' / 'Local'
     checks = [
-        ('chrome', local / 'Google' / 'Chrome' / 'User Data'),
-        ('edge', local / 'Microsoft' / 'Edge' / 'User Data'),
-        ('firefox', Path.home() / 'AppData' / 'Roaming' / 'Mozilla' / 'Firefox' / 'Profiles'),
-        ('brave', local / 'BraveSoftware' / 'Brave-Browser' / 'User Data'),
-        ('opera', local / 'Opera Software' / 'Opera Stable'),
+        ('chrome', (
+            local / 'Google' / 'Chrome' / 'User Data',
+            home / '.config' / 'google-chrome',
+        )),
+        ('edge', (
+            local / 'Microsoft' / 'Edge' / 'User Data',
+            home / '.config' / 'microsoft-edge',
+        )),
+        ('firefox', (
+            home / 'AppData' / 'Roaming' / 'Mozilla' / 'Firefox' / 'Profiles',
+            home / '.mozilla' / 'firefox',
+        )),
+        ('brave', (
+            local / 'BraveSoftware' / 'Brave-Browser' / 'User Data',
+            home / '.config' / 'BraveSoftware' / 'Brave-Browser',
+        )),
+        ('opera', (
+            local / 'Opera Software' / 'Opera Stable',
+            home / '.config' / 'opera',
+        )),
     ]
-    for name, path in checks:
-        if path.exists():
-            found.append(name)
-    return found or ['chrome']
+    for name, paths in checks:
+        for path in paths:
+            if _browser_cookie_db(path, name):
+                found.append(name)
+                break
+    return found
 
 
 def _build_strategies():
@@ -173,11 +218,8 @@ def _base_opts(impersonate=None, cookies_browser=None):
         opts['impersonate'] = target
         opts['extractor_args']['generic'] = {'impersonate': [target]}
 
-    if cookies_browser:
-        try:
-            opts['cookiesfrombrowser'] = (cookies_browser,)
-        except Exception:
-            pass
+    if cookies_browser and cookies_browser in _detect_browsers():
+        opts['cookiesfrombrowser'] = (cookies_browser,)
 
     ff = _ffmpeg_path()
     if ff:
@@ -193,7 +235,8 @@ def _is_retriable(exc):
         'unable to download webpage', 'sign in', 'login',
         'confirm your age', 'bot', 'captcha', 'cloudflare',
         'impersonate target', 'is not available', 'flashvars',
-        'unable to extract',
+        'unable to extract', 'cookies database', 'cookiesfrombrowser',
+        'could not find chrome', 'could not find edge', 'could not find firefox',
     ))
 
 
