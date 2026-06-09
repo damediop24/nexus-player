@@ -17,7 +17,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from db import get_conn, get_settings, init_db, row_to_dict, set_setting
-from resolver import DOWNLOADS, HAS_CURL_CFFI, _ffmpeg_path, download_media, find_mpv, launch_mpv, resolve_url
+from resolver import (
+    DOWNLOADS,
+    HAS_CURL_CFFI,
+    ResolveError,
+    _ffmpeg_path,
+    download_media,
+    find_mpv,
+    launch_mpv,
+    normalize_play_url,
+    resolve_url,
+)
 from streams import create_token, get_token
 from torrent import HAS_LIBTORRENT, get_manager, is_magnet, is_torrent_bytes, normalize_url, parse_range_header
 from pikpak import HAS_PIKPAK, configure as pikpak_configure, get_fresh_stream, get_status as pikpak_status, is_configured as pikpak_ready, list_tasks as pikpak_list_tasks, resolve_via_pikpak, set_enabled as pikpak_set_enabled, test_login as pikpak_test_login, torrent_bytes_to_magnet
@@ -44,7 +54,7 @@ class ResolveRequest(BaseModel):
     @field_validator('url', mode='before')
     @classmethod
     def _normalize_resolve_url(cls, value):
-        return normalize_url(value) if value else value
+        return normalize_play_url(value) if value else value
 
 
 class PlayRequest(BaseModel):
@@ -55,7 +65,7 @@ class PlayRequest(BaseModel):
     @field_validator('url', mode='before')
     @classmethod
     def _normalize_play_url(cls, value):
-        return normalize_url(value) if value else value
+        return normalize_play_url(value) if value else value
 
 
 class LocalPlayRequest(BaseModel):
@@ -145,6 +155,12 @@ def _lan_ip():
         return '127.0.0.1'
 
 
+def _raise_resolve_http(exc: Exception):
+    if isinstance(exc, ResolveError):
+        raise HTTPException(400, exc.to_dict())
+    raise HTTPException(400, str(exc))
+
+
 def _make_play_response(info: dict, source_url: str):
     if info.get('pikpak_file_id'):
         play_url = f'/api/pikpak/stream/{info["pikpak_file_id"]}'
@@ -206,7 +222,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.4.1',
+        'version': '2.5.0',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -225,8 +241,10 @@ def status():
 def api_resolve(req: ResolveRequest):
     try:
         return resolve_url(req.url, req.format_id)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(400, str(e))
+        _raise_resolve_http(e)
 
 
 @app.post('/api/play')
@@ -246,7 +264,7 @@ def api_play(req: PlayRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, str(e))
+        _raise_resolve_http(e)
 
 
 @app.post('/api/play/local')

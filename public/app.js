@@ -66,13 +66,30 @@ let audioCtx = null;
 let gainNode = null;
 let audioBoostReady = false;
 
+function attachApiError(detail, status) {
+  let message = `Error ${status}`;
+  const err = new Error(message);
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    message = detail.error || detail.message || message;
+    err.message = message;
+    err.code = detail.code || null;
+    err.hint = detail.hint || null;
+    err.retriable = !!detail.retriable;
+    err.site = detail.site || null;
+    return err;
+  }
+  if (typeof detail === 'string') err.message = detail;
+  else if (detail) err.message = String(detail);
+  return err;
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || data.error || `Error ${res.status}`);
+  if (!res.ok) throw attachApiError(data.detail, res.status);
   return data;
 }
 
@@ -393,12 +410,29 @@ async function loadProgressive(url) {
   startFullPrefetch(url, signal);
 }
 
+function onVideoElementError() {
+  const code = video.error?.code;
+  const labels = {
+    1: 'Playback aborted',
+    2: 'Network error while loading stream',
+    3: 'Stream decode failed',
+    4: 'Format not supported in browser',
+  };
+  const detail = labels[code] || 'Video playback failed';
+  handlePlaybackError(detail, {
+    message: detail,
+    hint: 'Try another quality, MPV, or a direct .mp4/.m3u8 link.',
+    retriable: true,
+  });
+}
+
 function loadSource(url, type = 'progressive') {
   destroyHls();
   destroyDash();
   resetPrefetch();
   video.removeAttribute('src');
   video.load();
+  video.onerror = onVideoElementError;
 
   if (type === 'dash' && typeof dashjs !== 'undefined') {
     dashPlayer = dashjs.MediaPlayer().create();
@@ -417,6 +451,14 @@ function loadSource(url, type = 'progressive') {
     dashPlayer.initialize(video, url, true);
     video.addEventListener('canplay', () => tryPlay(), { once: true });
     dashPlayer.on(dashjs.MediaPlayer.events.BUFFER_LEVEL_UPDATED, () => updateBufferBar());
+    dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+      if (!e?.error) return;
+      handlePlaybackError('DASH stream error', {
+        message: e.error.message || 'DASH playback failed',
+        hint: 'Try another quality or open in MPV.',
+        retriable: true,
+      });
+    });
   } else if (type === 'hls' && typeof Hls !== 'undefined' && Hls.isSupported()) {
     hls = new Hls({
       enableWorker: true,
@@ -433,7 +475,18 @@ function loadSource(url, type = 'progressive') {
     hls.on(Hls.Events.BUFFER_APPENDED, () => updateBufferBar());
     hls.on(Hls.Events.FRAG_BUFFERED, () => updateBufferBar());
     hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) toast('Stream error — try MPV or another quality', 4000);
+      if (!data.fatal) return;
+      const hint = data.type === Hls.ErrorTypes.NETWORK_ERROR
+        ? 'Network error — stream may have expired. Replay the link or try MPV.'
+        : 'Try another quality or open in MPV.';
+      handlePlaybackError('HLS stream error', {
+        message: data.details || data.type || 'HLS playback failed',
+        hint,
+        retriable: true,
+      });
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        try { hls.startLoad(); } catch (_) {}
+      }
     });
   } else if (type === 'hls' && video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = url;
@@ -936,7 +989,27 @@ function startTorrentPolling() {
 }
 
 function isBlockedSiteError(msg) {
-  return /403|forbidden|blocked this server|cloud servers/i.test(msg || '');
+  return /403|forbidden|blocked this server|cloud servers|sign in|confirm your age|bot|captcha|unable to extract/i.test(msg || '');
+}
+
+function shouldTryLocalBridge(err) {
+  if (!err) return false;
+  if (err.code === 'site_blocked' || err.code === 'youtube_blocked' || err.code === 'youtube_auth_required' || err.code === 'kvs_failed') {
+    return true;
+  }
+  return err.retriable !== false && isBlockedSiteError(err.message);
+}
+
+function formatPlayError(err) {
+  const parts = [err?.message || 'Playback failed'];
+  if (err?.hint) parts.push(err.hint);
+  return parts.join(' — ');
+}
+
+function handlePlaybackError(context, err) {
+  const msg = formatPlayError(err);
+  toast(`${context}: ${msg}`, 9000);
+  if (nowPlaying) nowPlaying.textContent = 'Playback error';
 }
 
 async function resolveViaLocalBridge(url) {
@@ -1021,18 +1094,17 @@ async function playUrl(url, formatId = null, resumePos = 0) {
 
     applyPlayback(info, resumePos);
   } catch (e) {
-    const msg = e.message || String(e);
-    if (isBlockedSiteError(msg)) {
+    if (shouldTryLocalBridge(e)) {
       try {
         await playViaLocalBridge(url, formatId, resumePos);
         return;
       } catch (localErr) {
         toast('Local resolve failed — run start-mpv-bridge.vbs on your PC, then try again', 10000);
-        toast((localErr.message || localErr) + '', 8000);
+        toast(formatPlayError(localErr), 8000);
         return;
       }
     }
-    toast('Error: ' + msg, 6000);
+    handlePlaybackError('Could not play link', e);
   } finally {
     cloudPollActive = isPikpakMedia(currentMedia);
   }
@@ -1385,7 +1457,7 @@ $('#resolve-btn').addEventListener('click', async () => {
       list.appendChild(row);
     });
     $('#formats-dialog').showModal();
-  } catch (e) { toast(e.message, 4000); }
+  } catch (e) { toast(formatPlayError(e), 6000); }
 });
 
 const DEFAULT_MPV_PATH = 'C:\\mpv\\mpv\\mpv.exe';

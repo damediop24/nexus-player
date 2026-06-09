@@ -1,9 +1,10 @@
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 import yt_dlp
@@ -27,6 +28,154 @@ _KVS_VIDEO_URL_PATTERNS = (
     re.compile(r"video_alt_url\s*:\s*'([^']+)'", re.I),
     re.compile(r'video_alt_url\s*:\s*"([^"]+)"', re.I),
 )
+
+_KVS_SKIP_HOSTS = (
+    'youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com',
+    'vimeo.com', 'dailymotion.com', 'twitch.tv', 'facebook.com',
+    'instagram.com', 'twitter.com', 'x.com', 'tiktok.com', 'reddit.com',
+)
+
+_YOUTUBE_HOSTS = (
+    'youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com',
+)
+
+_URL_IN_TEXT_RE = re.compile(r'https?://[^\s<>"\']+|magnet:\?[^\s<>"\']+', re.I)
+
+
+class ResolveError(Exception):
+    def __init__(self, message, code='resolve_failed', hint=None, retriable=False, site=None):
+        self.message = message
+        self.code = code
+        self.hint = hint
+        self.retriable = retriable
+        self.site = site
+        super().__init__(message)
+
+    def to_dict(self):
+        return {
+            'error': self.message,
+            'code': self.code,
+            'hint': self.hint,
+            'retriable': self.retriable,
+            'site': self.site,
+        }
+
+
+def _host_key(netloc):
+    host = (netloc or '').lower()
+    if host.startswith('www.'):
+        host = host[4:]
+    return host
+
+
+def _is_youtube_url(url):
+    return _host_key(urlparse(url).netloc) in _YOUTUBE_HOSTS
+
+
+def normalize_play_url(url):
+    from torrent import normalize_url
+
+    url = normalize_url(url)
+    if not url:
+        return url
+
+    if not url.startswith(('http://', 'https://', 'magnet:')):
+        match = _URL_IN_TEXT_RE.search(url)
+        if match:
+            url = match.group(0).rstrip('.,;:!?)]}')
+
+    parsed = urlparse(url)
+    host = _host_key(parsed.netloc)
+
+    if host in _YOUTUBE_HOSTS or host.endswith('.youtube.com'):
+        vid = None
+        qs = parse_qs(parsed.query)
+        if qs.get('v'):
+            vid = qs['v'][0]
+        if not vid:
+            for pattern in (
+                r'^/embed/([\w-]{6,})',
+                r'^/shorts/([\w-]{6,})',
+                r'^/v/([\w-]{6,})',
+                r'^/live/([\w-]{6,})',
+            ):
+                match = re.match(pattern, parsed.path)
+                if match:
+                    vid = match.group(1)
+                    break
+        if not vid and host == 'youtu.be':
+            vid = parsed.path.lstrip('/').split('/')[0] or None
+        if vid:
+            return f'https://www.youtube.com/watch?v={vid}'
+
+    return url
+
+
+def _cookies_file_path():
+    path = os.environ.get('YTDLP_COOKIES_FILE', '').strip()
+    if path and Path(path).is_file():
+        return path
+    default = ROOT / 'cookies.txt'
+    return str(default) if default.is_file() else None
+
+
+def _classify_resolve_error(exc, url):
+    msg = str(exc)
+    lower = msg.lower()
+    site = 'youtube' if _is_youtube_url(url) else _host_key(urlparse(url).netloc) or None
+
+    if _is_youtube_url(url):
+        if any(x in lower for x in ('sign in', 'login', 'confirm your age', 'members only', 'private video', 'not available')):
+            return ResolveError(
+                msg,
+                code='youtube_auth_required',
+                hint='Log into YouTube in Chrome/Edge, or run start-mpv-bridge.vbs on your PC.',
+                retriable=True,
+                site='youtube',
+            )
+        if any(x in lower for x in ('bot', 'captcha', '403', 'forbidden', 'blocked', 'unable to extract')):
+            return ResolveError(
+                msg,
+                code='youtube_blocked',
+                hint='YouTube blocked cloud resolve. Run start-mpv-bridge.vbs on your PC, or paste a direct link.',
+                retriable=True,
+                site='youtube',
+            )
+
+    if any(x in lower for x in ('unsupported url', 'no suitable extractor', 'no video formats')):
+        return ResolveError(
+            msg,
+            code='unsupported',
+            hint='Try a direct .mp4/.m3u8 link, or open the page URL instead of an embed.',
+            retriable=False,
+            site=site,
+        )
+
+    if any(x in lower for x in ('403', 'forbidden', 'blocked this server', 'cloud servers')):
+        return ResolveError(
+            msg,
+            code='site_blocked',
+            hint='Site blocked cloud servers. Use MPV bridge or paste a direct media link.',
+            retriable=True,
+            site=site,
+        )
+
+    if any(x in lower for x in ('timed out', 'timeout', 'connection', 'network', 'name or service not known')):
+        return ResolveError(
+            msg,
+            code='network_error',
+            hint='Network error — check the URL and try again.',
+            retriable=True,
+            site=site,
+        )
+
+    return ResolveError(
+        msg,
+        code='resolve_failed',
+        hint='Try another quality, MPV, or a direct stream link (.mp4 / .m3u8).',
+        retriable=True,
+        site=site,
+    )
 
 
 def _ffmpeg_path():
@@ -148,34 +297,38 @@ def _detect_browsers():
 
 
 def _build_strategies():
-    strategies = [
-        {'label': 'default', 'impersonate': None, 'cookies': None},
-    ]
+    strategies = []
+    cookies_file = _cookies_file_path()
+    if cookies_file:
+        strategies.append({'label': 'cookies-file', 'impersonate': None, 'cookies': None, 'cookiefile': cookies_file})
+
+    strategies.append({'label': 'default', 'impersonate': None, 'cookies': None, 'cookiefile': None})
 
     for target in _available_impersonate_targets():
-        strategies.append({'label': f'impersonate-{target}', 'impersonate': target, 'cookies': None})
+        strategies.append({'label': f'impersonate-{target}', 'impersonate': target, 'cookies': None, 'cookiefile': None})
 
     preferred_impersonate = _pick_impersonate_target('chrome')
     for browser in _detect_browsers():
-        strategies.append({'label': f'cookies-{browser}', 'impersonate': None, 'cookies': browser})
+        strategies.append({'label': f'cookies-{browser}', 'impersonate': None, 'cookies': browser, 'cookiefile': None})
         if preferred_impersonate:
             strategies.append({
                 'label': f'cookies+impersonate-{browser}',
                 'impersonate': preferred_impersonate,
                 'cookies': browser,
+                'cookiefile': None,
             })
 
     seen = set()
     unique = []
     for s in strategies:
-        key = (s['impersonate'], s['cookies'])
+        key = (s['impersonate'], s['cookies'], s.get('cookiefile'))
         if key not in seen:
             seen.add(key)
             unique.append(s)
     return unique
 
 
-def _base_opts(impersonate=None, cookies_browser=None):
+def _base_opts(impersonate=None, cookies_browser=None, cookiefile=None):
     opts = {
         'quiet': True,
         'no_warnings': True,
@@ -193,7 +346,11 @@ def _base_opts(impersonate=None, cookies_browser=None):
             'Sec-Fetch-Mode': 'navigate',
         },
         'extractor_args': {
-            'youtube': {'player_client': ['android', 'web', 'tv_embedded']},
+            'youtube': {
+                'player_client': ['ios', 'android', 'mweb', 'web', 'tv_embedded'],
+                'player_skip': ['webpage', 'configs'],
+            },
+            'generic': {'impersonate': []},
         },
     }
 
@@ -204,6 +361,10 @@ def _base_opts(impersonate=None, cookies_browser=None):
 
     if cookies_browser and cookies_browser in _detect_browsers():
         opts['cookiesfrombrowser'] = (cookies_browser,)
+
+    cookie_path = cookiefile or _cookies_file_path()
+    if cookie_path:
+        opts['cookiefile'] = cookie_path
 
     ff = _ffmpeg_path()
     if ff:
@@ -225,8 +386,16 @@ def _is_retriable(exc):
 
 
 def _should_try_kvs_player(url):
+    host = _host_key(urlparse(url).netloc)
+    if any(host == h or host.endswith('.' + h) for h in _KVS_SKIP_HOSTS):
+        return False
     path = urlparse(url).path.lower()
     return bool(re.search(r'/video/\d+', path)) or '/embed/' in path
+
+
+def _is_likely_kvs_site(url):
+    path = urlparse(url).path.lower()
+    return bool(re.search(r'/video/\d+', path))
 
 
 def _resolve_kvs_player(url):
@@ -307,8 +476,8 @@ def _resolve_kvs_player(url):
     return result
 
 
-def _extract(url, format_id=None, impersonate=None, cookies_browser=None):
-    opts = _base_opts(impersonate, cookies_browser)
+def _extract(url, format_id=None, impersonate=None, cookies_browser=None, cookiefile=None):
+    opts = _base_opts(impersonate, cookies_browser, cookiefile)
     if format_id:
         opts['format'] = format_id
     else:
@@ -831,15 +1000,23 @@ def _resolve_magnet(url, format_id=None):
 
 
 def resolve_url(url, format_id=None):
-    from torrent import is_magnet, normalize_url
+    from torrent import is_magnet
 
-    url = normalize_url(url)
+    url = normalize_play_url(url)
+    if not url:
+        raise ResolveError('No URL provided', code='invalid_url', hint='Paste a link or magnet.', retriable=False)
 
     if is_magnet(url):
-        return _resolve_magnet(url, format_id)
+        try:
+            return _resolve_magnet(url, format_id)
+        except Exception as exc:
+            raise _classify_resolve_error(exc, url) from exc
 
     if _is_stremio_resolver(url):
-        return _resolve_stremio_stream(url)
+        try:
+            return _resolve_stremio_stream(url)
+        except Exception as exc:
+            raise _classify_resolve_error(exc, url) from exc
 
     if _is_direct_media(url):
         return _direct_media_response(url)
@@ -850,17 +1027,18 @@ def resolve_url(url, format_id=None):
             return _direct_media_response(url, probe)
         return _direct_media_response(url, _cdn_download_fallback(url))
 
-    if is_magnet(url):
-        return _resolve_magnet(url, format_id)
-
     if _should_try_kvs_player(url):
         try:
             return _resolve_kvs_player(url)
         except Exception as kvs_error:
-            raise RuntimeError(
-                f'{kvs_error} — This site uses embedded video that must be scraped directly. '
-                'If playback fails, the site may block cloud servers; try again later or use a direct .mp4 link.'
-            ) from kvs_error
+            if _is_likely_kvs_site(url):
+                raise ResolveError(
+                    str(kvs_error),
+                    code='kvs_failed',
+                    hint='This site embeds video that cloud servers cannot scrape. Try MPV bridge or a direct link.',
+                    retriable=True,
+                    site=_host_key(urlparse(url).netloc),
+                ) from kvs_error
 
     last_error = None
     for strategy in _build_strategies():
@@ -870,29 +1048,36 @@ def resolve_url(url, format_id=None):
                 format_id,
                 impersonate=strategy['impersonate'],
                 cookies_browser=strategy['cookies'],
+                cookiefile=strategy.get('cookiefile'),
             )
             result = _build_response(info, url)
-            if not result.get('stream_url') and _looks_like_cdn_download(url):
-                return _direct_media_response(url, _cdn_download_fallback(url))
+            if not result.get('stream_url'):
+                if _looks_like_cdn_download(url):
+                    return _direct_media_response(url, _cdn_download_fallback(url))
+                raise ResolveError(
+                    'No playable stream found',
+                    code='no_stream',
+                    hint='Try another quality from the menu, or open in MPV.',
+                    retriable=True,
+                    site=_host_key(urlparse(url).netloc),
+                )
             if strategy['label'] != 'default':
                 result['resolved_with'] = strategy['label']
             return result
+        except ResolveError:
+            raise
         except Exception as exc:
             last_error = exc
             if not _is_retriable(exc):
                 if _looks_like_cdn_download(url):
                     return _direct_media_response(url, _cdn_download_fallback(url))
-                raise
+                raise _classify_resolve_error(exc, url) from exc
             continue
 
     if _looks_like_cdn_download(url):
         return _direct_media_response(url, _cdn_download_fallback(url))
 
-    hint = (
-        'Site blocked the request (403). Try: paste a direct video link (.mp4/.m3u8), '
-        'use the MPV button, or make sure you are logged into the site in Chrome/Edge.'
-    )
-    raise RuntimeError(f'{last_error}  —  {hint}')
+    raise _classify_resolve_error(last_error or RuntimeError('All resolve strategies failed'), url)
 
 
 def download_media(url, format_id=None, on_progress=None):
@@ -916,7 +1101,7 @@ def download_media(url, format_id=None, on_progress=None):
     last_error = None
     for strategy in _build_strategies():
         try:
-            opts = _base_opts(strategy['impersonate'], strategy['cookies'])
+            opts = _base_opts(strategy['impersonate'], strategy['cookies'], strategy.get('cookiefile'))
             opts.update({
                 'outtmpl': outtmpl,
                 'progress_hooks': [hook],
