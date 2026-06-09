@@ -45,10 +45,16 @@ def test_resolve(label, url):
         if resp.status_code >= 400:
             print(f'    manifest fetch failed: {resp.status_code}')
             return False
-        rewritten = rewrite_hls_manifest(resp.text, stream_url, headers)
+        rewritten = rewrite_hls_manifest(resp.text, stream_url, headers, url)
         proxy_lines = [ln for ln in rewritten.splitlines() if ln and not ln.startswith('#')]
         if not proxy_lines or not all('/api/proxy/' in ln for ln in proxy_lines[:3]):
             print('    manifest rewrite failed')
+            return False
+        from streams import get_token
+        seg_token = proxy_lines[0].split('/')[-1]
+        seg_entry = get_token(seg_token)
+        if not seg_entry or not seg_entry.get('refresh_url'):
+            print('    segment refresh_url missing')
             return False
         print(f'    hls segments proxied: {len(proxy_lines)}')
     elif stream_url.startswith('http'):

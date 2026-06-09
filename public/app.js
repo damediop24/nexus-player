@@ -551,6 +551,36 @@ function onVideoElementError() {
   }
 }
 
+function isXvideosMedia(info) {
+  const site = (info?.site || '').toLowerCase();
+  const src = (info?.source_url || info?.url || '').toLowerCase();
+  return site === 'xvideos' || src.includes('xvideos.com');
+}
+
+function buildHlsConfig() {
+  const base = {
+    enableWorker: true,
+    maxMaxBufferLength: HLS_MAX_BUFFER_SEC,
+    maxBufferSize: 16 * 1024 * 1024 * 1024,
+    backBufferLength: 300,
+    progressive: true,
+    startFragPrefetch: true,
+  };
+  if (!isXvideosMedia(currentMedia)) {
+    return { ...base, maxBufferLength: 600 };
+  }
+  const dur = Number(currentMedia?.duration) || 0;
+  return {
+    ...base,
+    maxBufferLength: Math.max(dur + 120, 3600),
+    maxLoadingDelay: 0,
+    maxStarvationDelay: 1,
+    testBandwidth: false,
+    capLevelToPlayerSize: false,
+    abrEwmaDefaultEstimate: 50000000,
+  };
+}
+
 function loadSource(url, type = 'progressive') {
   clearBlackVideoWatch();
   destroyHls();
@@ -586,20 +616,38 @@ function loadSource(url, type = 'progressive') {
       });
     });
   } else if (type === 'hls' && typeof Hls !== 'undefined' && Hls.isSupported()) {
-    hls = new Hls({
-      enableWorker: true,
-      maxBufferLength: 600,
-      maxMaxBufferLength: HLS_MAX_BUFFER_SEC,
-      maxBufferSize: 16 * 1024 * 1024 * 1024,
-      backBufferLength: 300,
-      progressive: true,
-      startFragPrefetch: true,
-    });
+    const xvideosHls = isXvideosMedia(currentMedia);
+    hls = new Hls(buildHlsConfig());
     hls.loadSource(url);
     hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (xvideosHls) {
+        const dur = hls.media?.duration || Number(currentMedia?.duration) || 0;
+        if (dur > 0) {
+          hls.config.maxBufferLength = Math.ceil(dur) + 120;
+          hls.config.maxMaxBufferLength = Math.max(hls.config.maxMaxBufferLength, hls.config.maxBufferLength);
+        }
+        try { hls.startLoad(-1); } catch (_) {}
+      }
+      tryPlay();
+    });
+    if (xvideosHls) {
+      hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+        hls._nexusTotalFrags = data.details?.totalFragments || data.details?.fragments?.length || 0;
+        hls._nexusBufferedFrags = 0;
+      });
+    }
     hls.on(Hls.Events.BUFFER_APPENDED, () => updateBufferBar());
-    hls.on(Hls.Events.FRAG_BUFFERED, () => updateBufferBar());
+    hls.on(Hls.Events.FRAG_BUFFERED, (_, data) => {
+      if (xvideosHls && hls._nexusTotalFrags) {
+        const sn = data?.frag?.sn;
+        if (typeof sn === 'number') {
+          hls._nexusBufferedFrags = Math.max(hls._nexusBufferedFrags || 0, sn + 1);
+          setPrefetchPercent((hls._nexusBufferedFrags / hls._nexusTotalFrags) * 100);
+        }
+      }
+      updateBufferBar();
+    });
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return;
       const details = stringifyApiDetail(data.details) || stringifyApiDetail(data.type) || 'HLS playback failed';

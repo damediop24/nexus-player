@@ -28,7 +28,7 @@ from resolver import (
     normalize_play_url,
     resolve_url,
 )
-from hls_proxy import is_hls_manifest, rewrite_hls_manifest
+from hls_proxy import is_hls_manifest, is_hls_segment_url, refresh_hls_segment, rewrite_hls_manifest
 from streams import create_token, get_token
 from torrent import HAS_LIBTORRENT, get_manager, is_magnet, is_torrent_bytes, normalize_url, parse_range_header
 from alldebrid import get_status as alldebrid_status, is_configured as alldebrid_ready, list_tasks as alldebrid_list_tasks, resolve_magnet as resolve_via_alldebrid, resolve_torrent_bytes as resolve_torrent_via_alldebrid
@@ -240,7 +240,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.6.4',
+        'version': '2.6.5',
         'cookies_file': bool(__import__('resolver')._cookies_file_path()),
         'torrent_available': HAS_LIBTORRENT,
         'alldebrid': alldebrid_status(),
@@ -379,11 +379,16 @@ async def proxy_stream(token: str, request: Request):
 
         if upstream.status_code in (401, 403) and entry.get('refresh_url'):
             await upstream.aclose()
-            refreshed = resolve_url(entry['refresh_url'])
-            entry['url'] = refreshed['stream_url']
-            entry['headers'] = refreshed.get('headers') or {}
-            entry['stream_type'] = refreshed.get('stream_type', entry.get('stream_type'))
-            entry['content_type'] = refreshed.get('content_type', entry.get('content_type'))
+            if is_hls_segment_url(entry.get('url') or ''):
+                if not refresh_hls_segment(entry):
+                    await client.aclose()
+                    raise HTTPException(502, 'HLS segment expired and could not be refreshed')
+            else:
+                refreshed = resolve_url(entry['refresh_url'])
+                entry['url'] = refreshed['stream_url']
+                entry['headers'] = refreshed.get('headers') or {}
+                entry['stream_type'] = refreshed.get('stream_type', entry.get('stream_type'))
+                entry['content_type'] = refreshed.get('content_type', entry.get('content_type'))
             headers.clear()
             headers.update(entry['headers'])
             if range_header:
@@ -429,7 +434,12 @@ async def proxy_stream(token: str, request: Request):
                 text = body.decode('utf-8')
             except UnicodeDecodeError:
                 text = body.decode('utf-8', errors='replace')
-            rewritten = rewrite_hls_manifest(text, entry['url'], entry.get('headers'))
+            rewritten = rewrite_hls_manifest(
+                text,
+                entry['url'],
+                entry.get('headers'),
+                entry.get('refresh_url'),
+            )
             out_headers['content-type'] = 'application/vnd.apple.mpegurl'
             return Response(content=rewritten, status_code=upstream.status_code, headers=out_headers)
 
