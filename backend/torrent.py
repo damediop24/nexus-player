@@ -45,17 +45,13 @@ class TorrentManager:
         self.session = lt.session()
         self.session.listen_on(6881, 6991)
 
-        settings = {
-            'enable_dht': True,
-            'enable_lsd': True,
-            'enable_upnp': True,
-            'enable_natpmp': True,
-            'allow_multiple_connections_per_ip': True,
-        }
-        pack = lt.session_settings_pack()
-        for key, value in settings.items():
-            pack.set_bool(key, value)
-        self.session.apply_settings(pack)
+        settings = lt.default_settings()
+        settings['enable_dht'] = True
+        settings['enable_lsd'] = True
+        settings['enable_upnp'] = True
+        settings['enable_natpmp'] = True
+        settings['allow_multiple_connections_per_ip'] = True
+        self.session.apply_settings(settings)
 
         self.entries: dict[str, dict] = {}
         self._lock = threading.Lock()
@@ -79,8 +75,8 @@ class TorrentManager:
 
         params = self.lt.parse_magnet_uri(magnet)
         params.save_path = str(self.save_path)
+        params.flags |= self.lt.torrent_flags.sequential_download
         handle = self.session.add_torrent(params)
-        handle.set_flags(self.lt.torrent_flags.sequential_download)
         return self._register(handle, magnet, 'magnet')
 
     def add_torrent_data(self, data: bytes, label: str = 'torrent file') -> str:
@@ -91,8 +87,8 @@ class TorrentManager:
         params = self.lt.add_torrent_params()
         params.ti = info
         params.save_path = str(self.save_path)
+        params.flags |= self.lt.torrent_flags.sequential_download
         handle = self.session.add_torrent(params)
-        handle.set_flags(self.lt.torrent_flags.sequential_download)
         return self._register(handle, label, label)
 
     def get(self, tid: str) -> Optional[dict]:
@@ -154,7 +150,7 @@ class TorrentManager:
         entry = self.get(tid)
         if not entry:
             raise KeyError('Torrent not found')
-        entry['handle'].set_file_priority(file_index, max(0, min(7, priority)))
+        entry['handle'].file_priority(file_index, max(0, min(7, priority)))
 
     def prioritize_file(self, tid: str, file_index: int):
         entry = self.get(tid)
@@ -166,7 +162,7 @@ class TorrentManager:
         fs = ti.files()
 
         for i in range(fs.num_files()):
-            handle.set_file_priority(i, 7 if i == file_index else 1)
+            handle.file_priority(i, 7 if i == file_index else 1)
 
         handle.set_flags(self.lt.torrent_flags.sequential_download)
 
