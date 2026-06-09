@@ -4,6 +4,9 @@ services:
     runtime: docker
     plan: free
     region: frankfurt
+    repo: https://github.com/damediop24/nexus-player
+    branch: main
+    autoDeployTrigger: commit
     healthCheckPath: /api/status
     envVars:
       - key: PORT

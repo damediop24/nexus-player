@@ -512,6 +512,23 @@ def _direct_media_response(url, probe=None):
     }
 
 
+def _cdn_download_fallback(url):
+    host = urlparse(url).netloc.lower()
+    title = host or 'CDN download'
+    return {
+        'ext': 'mp4',
+        'stream_type': 'progressive',
+        'title': title,
+        'filesize': None,
+        'content_type': 'video/mp4',
+        'headers': {
+            'User-Agent': BROWSER_UA,
+            'Referer': _referer_for_url(url),
+            'Accept': '*/*',
+        },
+    }
+
+
 def resolve_url(url, format_id=None):
     if _is_direct_media(url):
         return _direct_media_response(url)
@@ -520,6 +537,7 @@ def resolve_url(url, format_id=None):
         probe = _probe_direct_url(url)
         if probe:
             return _direct_media_response(url, probe)
+        return _direct_media_response(url, _cdn_download_fallback(url))
 
     last_error = None
 
@@ -532,14 +550,21 @@ def resolve_url(url, format_id=None):
                 cookies_browser=strategy['cookies'],
             )
             result = _build_response(info, url)
+            if not result.get('stream_url') and _looks_like_cdn_download(url):
+                return _direct_media_response(url, _cdn_download_fallback(url))
             if strategy['label'] != 'default':
                 result['resolved_with'] = strategy['label']
             return result
         except Exception as exc:
             last_error = exc
             if not _is_retriable(exc):
+                if _looks_like_cdn_download(url):
+                    return _direct_media_response(url, _cdn_download_fallback(url))
                 raise
             continue
+
+    if _looks_like_cdn_download(url):
+        return _direct_media_response(url, _cdn_download_fallback(url))
 
     hint = (
         'Site blocked the request (403). Try: paste a direct video link (.mp4/.m3u8), '
