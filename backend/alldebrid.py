@@ -202,9 +202,63 @@ def _normalize_task(magnet: dict) -> dict:
     }
 
 
+def _flatten_alldebrid_files(files: list[dict]) -> list[dict]:
+    flat = []
+    for item in files:
+        nested = item.get('e')
+        if nested:
+            flat.extend(nested)
+        elif item.get('l') or item.get('link'):
+            flat.append(item)
+    return flat
+
+
+def _pick_file_entry(
+    files: list[dict],
+    title_hint: str = '',
+    file_index: Optional[int] = None,
+) -> Optional[dict]:
+    flat = _flatten_alldebrid_files(files)
+    if not flat:
+        return None
+
+    hint = (title_hint or '').strip()
+    if hint:
+        hint_lower = hint.lower()
+        hint_stem = hint_lower.rsplit('.', 1)[0]
+        for item in flat:
+            name = (item.get('n') or item.get('filename') or item.get('name') or '').strip()
+            name_lower = name.lower()
+            if name_lower == hint_lower or name_lower.rsplit('.', 1)[0] == hint_stem:
+                return {
+                    'name': name,
+                    'size': int(item.get('s') or item.get('size') or 0),
+                    'link': item.get('l') or item.get('link'),
+                }
+        for item in flat:
+            name = (item.get('n') or item.get('filename') or item.get('name') or '').strip()
+            if hint_stem and hint_stem in name.lower():
+                return {
+                    'name': name,
+                    'size': int(item.get('s') or item.get('size') or 0),
+                    'link': item.get('l') or item.get('link'),
+                }
+
+    if file_index is not None and 0 <= file_index < len(flat):
+        item = flat[file_index]
+        name = (item.get('n') or item.get('filename') or item.get('name') or '').strip()
+        return {
+            'name': name,
+            'size': int(item.get('s') or item.get('size') or 0),
+            'link': item.get('l') or item.get('link'),
+        }
+
+    return _pick_video_file(flat)
+
+
 def _pick_video_file(files: list[dict]) -> Optional[dict]:
     videos = []
-    for item in files:
+    for item in _flatten_alldebrid_files(files):
         name = (item.get('n') or item.get('filename') or item.get('name') or '').strip()
         if not name:
             continue
@@ -254,6 +308,74 @@ def _requires_mpv_playback(title='', url='', ext=''):
     if ext_l in ('mkv', 'avi', 'wmv', 'flv', 'vob', 'rm', 'rmvb', 'ts', 'm2ts'):
         return True
     return False
+
+
+def parse_torrentio_url(url: str) -> Optional[dict]:
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.netloc or '').lower()
+    if 'strem.fun' not in host:
+        return None
+
+    parts = [p for p in parsed.path.split('/') if p]
+    if len(parts) < 5 or parts[0] != 'resolve':
+        return None
+
+    provider = parts[1].lower()
+    if provider != 'alldebrid':
+        return None
+
+    title = unquote(parts[4]) if len(parts) > 4 else ''
+    file_index = None
+    if len(parts) > 5 and parts[5].isdigit():
+        file_index = int(parts[5])
+    if len(parts) > 6 and not title:
+        title = unquote(parts[6])
+
+    return {
+        'provider': provider,
+        'hash': parts[3].lower(),
+        'title': title,
+        'file_index': file_index,
+    }
+
+
+def resolve_torrentio_url(url: str) -> Optional[dict]:
+    parsed = parse_torrentio_url(url)
+    if not parsed or not is_configured():
+        return None
+
+    magnet = f'magnet:?xt=urn:btih:{parsed["hash"]}'
+    uploaded = upload_magnet(magnet)
+    magnet_id = int(uploaded['id'])
+    if not uploaded.get('ready'):
+        magnet = wait_for_magnet(magnet_id, timeout=300.0)
+    else:
+        magnet = get_magnet_status(magnet_id)
+
+    files = _collect_files(magnet)
+    pick = _pick_file_entry(files, parsed.get('title') or '', parsed.get('file_index'))
+    if not pick or not pick.get('link'):
+        return None
+
+    unlocked = unlock_link(pick['link'])
+    stream_url = unlocked.get('link')
+    if not stream_url:
+        return None
+
+    title = unlocked.get('filename') or pick['name'] or parsed.get('title') or 'Stremio stream'
+    size = int(unlocked.get('filesize') or pick.get('size') or 0)
+    ext = title.lower().rsplit('.', 1)[-1] if '.' in title.lower() else 'mp4'
+
+    return {
+        'stream_url': stream_url,
+        'title': title,
+        'filesize': size,
+        'ext': ext,
+        'content_type': _content_type_for_name(title),
+        'requires_mpv': _requires_mpv_playback(title, url, ext),
+    }
 
 
 def wait_for_magnet(magnet_id: int, timeout: float = 600.0) -> dict:

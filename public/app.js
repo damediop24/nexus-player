@@ -602,17 +602,37 @@ function loadSource(url, type = 'progressive') {
     hls.on(Hls.Events.FRAG_BUFFERED, () => updateBufferBar());
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return;
+      const details = stringifyApiDetail(data.details) || stringifyApiDetail(data.type) || 'HLS playback failed';
+      const canFallbackMp4 = currentMedia?.formats?.some((f) => (
+        f.format_id?.startsWith('mp4')
+        && f.format_id !== currentMedia.best_format_id
+        && !(f.url || '').includes('.m3u8')
+      ));
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !hls._nexusRetried) {
+        hls._nexusRetried = true;
+        try {
+          hls.startLoad(-1);
+          return;
+        } catch (_) {}
+      }
+      if (canFallbackMp4 && !hls._nexusMp4Fallback) {
+        hls._nexusMp4Fallback = true;
+        const mp4Fmt = currentMedia.formats.find((f) => f.format_id?.startsWith('mp4-high'))
+          || currentMedia.formats.find((f) => f.format_id?.startsWith('mp4'));
+        if (mp4Fmt?.format_id && currentMedia.source_url) {
+          toast('HLS failed — trying MP4 quality…', 5000);
+          playUrl(currentMedia.source_url, mp4Fmt.format_id);
+          return;
+        }
+      }
       const hint = data.type === Hls.ErrorTypes.NETWORK_ERROR
         ? 'Network error — stream may have expired. Replay the link or try MPV.'
         : 'Try another quality or open in MPV.';
       handlePlaybackError('HLS stream error', {
-        message: stringifyApiDetail(data.details) || stringifyApiDetail(data.type) || 'HLS playback failed',
+        message: details,
         hint,
         retriable: true,
       });
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        try { hls.startLoad(); } catch (_) {}
-      }
     });
   } else if (type === 'hls' && video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = url;

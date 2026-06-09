@@ -836,41 +836,41 @@ def _url_from_stremio_body(resp):
 def _resolve_stremio_url(url):
     headers = _stremio_request_headers()
     max_hops = 10
+    timeout = httpx.Timeout(20.0, connect=10.0)
 
     try:
-        with httpx.Client(follow_redirects=False, timeout=httpx.Timeout(120.0, connect=30.0)) as client:
+        with httpx.Client(follow_redirects=False, timeout=timeout) as client:
             current = url
             for _ in range(max_hops):
-                resp = client.get(current, headers=headers)
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    location = resp.headers.get('location')
-                    if not location:
-                        return None
-                    current = urljoin(current, location)
-                    parsed = urlparse(current)
-                    if parsed.scheme and parsed.netloc:
-                        headers['Referer'] = f'{parsed.scheme}://{parsed.netloc}/'
-                    continue
-                if resp.status_code in (200, 206):
-                    resolved = _url_from_stremio_body(resp)
-                    if resolved:
-                        return resolved
-                    final = str(resp.url)
-                    return final if final.startswith('http') else current
-                return None
+                with client.stream('GET', current, headers=headers) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get('location')
+                        resp.close()
+                        if not location:
+                            return None
+                        current = urljoin(current, location)
+                        parsed = urlparse(current)
+                        if parsed.scheme and parsed.netloc:
+                            headers['Referer'] = f'{parsed.scheme}://{parsed.netloc}/'
+                        continue
+                    if resp.status_code in (200, 206):
+                        if 'strem.fun' in (urlparse(current).netloc or '').lower():
+                            resolved = _url_from_stremio_body(resp)
+                            if resolved:
+                                return resolved
+                        return current
+                    resp.close()
+                    return None
     except Exception:
         pass
 
     try:
-        with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(120.0, connect=30.0)) as client:
-            resp = client.get(url, headers=_stremio_request_headers())
-            if resp.status_code in (200, 206):
-                resolved = _url_from_stremio_body(resp)
-                if resolved:
-                    return resolved
-                final = str(resp.url)
-                if final.startswith('http') and final != url:
-                    return final
+        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+            with client.stream('GET', url, headers=_stremio_request_headers()) as resp:
+                if resp.status_code in (200, 206):
+                    final = str(resp.url)
+                    if final.startswith('http') and final != url:
+                        return final
     except Exception:
         return None
     return None
@@ -889,13 +889,26 @@ def _requires_mpv_playback(title='', url='', ext=''):
 
 
 def _resolve_stremio_stream(url):
-    final_url = _resolve_stremio_url(url)
+    title = _title_from_stremio_url(url)
+    final_url = None
+    torrentio_meta = None
+
+    try:
+        from alldebrid import is_configured, resolve_torrentio_url
+        if is_configured():
+            torrentio_meta = resolve_torrentio_url(url)
+            if torrentio_meta:
+                final_url = torrentio_meta['stream_url']
+                title = torrentio_meta.get('title') or title
+    except Exception:
+        pass
+
+    if not final_url:
+        final_url = _resolve_stremio_url(url)
     if not final_url:
         raise RuntimeError(
             'Stremio resolver failed. The link may be expired or the debrid service is unavailable.'
         )
-
-    title = _title_from_stremio_url(url)
     path_lower = final_url.lower().split('?')[0]
     ext = path_lower.rsplit('.', 1)[-1] if '.' in path_lower else 'mp4'
     probe = {
@@ -916,7 +929,12 @@ def _resolve_stremio_stream(url):
     result['site'] = 'stremio'
     result['url'] = url
     result['title'] = title
-    result['requires_mpv'] = _requires_mpv_playback(title, url, ext)
+    if torrentio_meta:
+        result['requires_mpv'] = torrentio_meta.get('requires_mpv', _requires_mpv_playback(title, url, ext))
+        if torrentio_meta.get('filesize'):
+            result['formats'][0]['filesize'] = torrentio_meta['filesize']
+    else:
+        result['requires_mpv'] = _requires_mpv_playback(title, url, ext)
     return result
 
 
