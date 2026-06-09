@@ -10,7 +10,11 @@ const downloadsList = $('#downloads-list');
 const libraryList = $('#library-list');
 const playlistsContainer = $('#playlists-container');
 const torrentList = $('#torrent-list');
+const cloudStatus = $('#cloud-status');
+const cloudStatusText = $('#cloud-status-text');
+const cloudProgressBar = $('#cloud-progress-bar');
 let torrentPollTimer = null;
+let cloudPollActive = false;
 let appStatus = null;
 const qualitySelect = $('#quality-select');
 const subtitleSelect = $('#subtitle-select');
@@ -199,6 +203,80 @@ function loadSource(url, type = 'progressive') {
   }
 }
 
+function isPikpakMedia(info) {
+  if (!info) return false;
+  return info.site === 'pikpak'
+    || info.resolved_with === 'pikpak-cloud'
+    || info.pikpak_task_id
+    || (info.source_url && isMagnet(info.source_url) && appStatus?.pikpak?.configured);
+}
+
+function formatPikpakPhase(phase) {
+  const labels = {
+    running: 'Downloading to cloud',
+    pending: 'Queued',
+    complete: 'Ready in cloud',
+    error: 'Failed',
+  };
+  return labels[phase] || phase || 'Cloud';
+}
+
+function findMatchingPikpakTask(tasks, info) {
+  if (!tasks?.length || !info) return null;
+  if (info.pikpak_task_id) {
+    const byTask = tasks.find((t) => t.task_id === info.pikpak_task_id || t.id === info.pikpak_task_id);
+    if (byTask) return byTask;
+  }
+  if (info.pikpak_file_id) {
+    const byFile = tasks.find((t) => t.file_id === info.pikpak_file_id);
+    if (byFile) return byFile;
+  }
+  if (info.source_url) {
+    const src = info.source_url.trim();
+    const bySource = tasks.find((t) => t.source && t.source.trim() === src);
+    if (bySource) return bySource;
+  }
+  if (info.title) {
+    const title = info.title.toLowerCase();
+    const byName = tasks.find((t) => (t.name || '').toLowerCase().includes(title.split(' — ')[0].toLowerCase()));
+    if (byName) return byName;
+  }
+  return null;
+}
+
+function renderCloudStatus(task) {
+  if (!task) {
+    cloudStatus.classList.add('hidden');
+    return;
+  }
+  cloudStatus.classList.remove('hidden', 'complete', 'error', 'running');
+  cloudStatus.classList.add(task.phase || 'running');
+  const parts = [
+    'PikPak cloud',
+    formatPikpakPhase(task.phase),
+    `${task.progress || 0}%`,
+  ];
+  if (task.file_size) parts.push(fmtSize(task.file_size));
+  if (task.download_rate) parts.push(`↓ ${fmtSpeed(task.download_rate)}`);
+  if (task.phase === 'complete') parts.push('streaming from cloud');
+  if (task.error) parts.push(task.error);
+  cloudStatusText.textContent = parts.filter(Boolean).join(' · ');
+  cloudProgressBar.style.width = `${Math.min(100, task.progress || 0)}%`;
+}
+
+async function updateCloudStatus() {
+  if (!appStatus?.pikpak?.configured || !isPikpakMedia(currentMedia)) {
+    cloudStatus.classList.add('hidden');
+    return;
+  }
+  try {
+    const tasks = await api('/api/pikpak/tasks');
+    renderCloudStatus(findMatchingPikpakTask(tasks, currentMedia) || tasks[0]);
+  } catch (_) {
+    cloudStatus.classList.add('hidden');
+  }
+}
+
 function setMeta(info) {
   metaTitle.textContent = info.title || '—';
   const parts = [];
@@ -209,6 +287,8 @@ function setMeta(info) {
   metaDetails.textContent = parts.join(' · ') || '';
   metaThumb.style.backgroundImage = info.thumbnail ? `url(${info.thumbnail})` : '';
   nowPlaying.textContent = info.title || 'Playing';
+  if (isPikpakMedia(info)) updateCloudStatus();
+  else cloudStatus.classList.add('hidden');
 }
 
 function populateFormats(formats, selected) {
@@ -304,6 +384,19 @@ function updateAbMarkers() {
   if (show && dur) updateProgress();
 }
 
+async function playResolved(info) {
+  currentMedia = info;
+  overlay.classList.add('hidden');
+  setMeta(info);
+  populateFormats(info.formats || [], info.best_format_id);
+  populateSubtitles(info.subtitles || []);
+  loadSource(info.play_url, info.stream_type);
+  toast('Playing: ' + (info.title || 'media'));
+  wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
+  if (isPikpakMedia(info)) updateCloudStatus();
+  cloudPollActive = isPikpakMedia(info);
+}
+
 async function playTorrent(tid, fileIndex = null) {
   toast('Starting torrent stream...', 5000);
   const body = fileIndex != null ? { file_index: fileIndex } : {};
@@ -328,7 +421,9 @@ async function addMagnet(magnet, autoplay = true) {
   await refreshTorrents();
   toast('Torrent added: ' + (res.name || 'magnet'));
   if (autoplay) {
-    if (res.type === 'pikpak' || res.pikpak) {
+    if ((res.type === 'pikpak' || res.pikpak) && res.play_url) {
+      await playResolved(res);
+    } else if (res.type === 'pikpak' || res.pikpak) {
       await playUrl(magnet);
     } else {
       const videoFile = (res.files || []).find((f) => f.is_video);
@@ -338,59 +433,102 @@ async function addMagnet(magnet, autoplay = true) {
   return res;
 }
 
+function renderLocalTorrentCard(t) {
+  const card = document.createElement('li');
+  card.className = 'torrent-card';
+  card.innerHTML = `
+    <div class="torrent-card-header">
+      <div>
+        <div class="torrent-name">${esc(t.name || 'Torrent')}</div>
+        <div class="torrent-meta">Local · ${esc(t.state || '')} · ${t.peers || 0} peers · ↓ ${fmtSpeed(t.download_rate)} · ↑ ${fmtSpeed(t.upload_rate)}</div>
+      </div>
+      <div class="torrent-actions">
+        <button type="button" data-act="play" title="Play best video">▶</button>
+        <button type="button" data-act="${t.paused ? 'resume' : 'pause'}">${t.paused ? '▶' : '⏸'}</button>
+        <button type="button" data-act="remove" title="Remove">✕</button>
+      </div>
+    </div>
+    <div class="torrent-progress"><div class="torrent-progress-bar" style="width:${t.progress || 0}%"></div></div>
+    <div class="torrent-files" data-files="${t.id}">Loading files...</div>
+  `;
+
+  card.querySelectorAll('.torrent-actions button').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const act = btn.dataset.act;
+      if (act === 'play') {
+        try { await playTorrent(t.id); } catch (err) { toast(err.message, 5000); }
+      } else if (act === 'pause') {
+        await api(`/api/torrent/${t.id}/pause`, { method: 'POST' });
+        refreshTorrents();
+      } else if (act === 'resume') {
+        await api(`/api/torrent/${t.id}/resume`, { method: 'POST' });
+        refreshTorrents();
+      } else if (act === 'remove') {
+        await api(`/api/torrent/${t.id}?delete_files=false`, { method: 'DELETE' });
+        refreshTorrents();
+      }
+    });
+  });
+
+  torrentList.appendChild(card);
+  loadTorrentFiles(t.id, card.querySelector(`[data-files="${t.id}"]`));
+}
+
+function renderPikpakTaskCard(t) {
+  const card = document.createElement('li');
+  card.className = 'torrent-card cloud';
+  const phase = formatPikpakPhase(t.phase || t.state);
+  const size = t.file_size ? fmtSize(t.file_size) : '';
+  const speed = t.download_rate ? `↓ ${fmtSpeed(t.download_rate)}` : '';
+  const canPlay = t.phase === 'complete' && t.source;
+  card.innerHTML = `
+    <div class="torrent-card-header">
+      <div>
+        <div class="torrent-name">${esc(t.name || 'PikPak download')}</div>
+        <div class="torrent-meta">PikPak cloud · ${esc(phase)} · ${t.progress || 0}%${size ? ` · ${size}` : ''}${speed ? ` · ${speed}` : ''}</div>
+      </div>
+      <div class="torrent-actions">
+        ${canPlay ? '<button type="button" data-act="play" title="Play from cloud">▶</button>' : ''}
+      </div>
+    </div>
+    <div class="torrent-progress"><div class="torrent-progress-bar" style="width:${t.progress || 0}%"></div></div>
+    ${t.error ? `<div class="torrent-meta" style="margin-top:0.35rem;color:var(--danger,#e55)">${esc(t.error)}</div>` : ''}
+  `;
+
+  const playBtn = card.querySelector('[data-act="play"]');
+  if (playBtn) {
+    playBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try { await playUrl(t.source); } catch (err) { toast(err.message, 5000); }
+    });
+  }
+
+  torrentList.appendChild(card);
+}
+
 async function refreshTorrents() {
-  if (!appStatus?.torrent_available) {
-    torrentList.innerHTML = '<li class="item"><div class="item-sub">Local libtorrent not available on this server</div></li>';
+  const localAvailable = appStatus?.torrent_available;
+  const pikpakAvailable = appStatus?.pikpak?.configured;
+  torrentList.innerHTML = '';
+
+  if (!localAvailable && !pikpakAvailable) {
+    torrentList.innerHTML = '<li class="item"><div class="item-sub">Configure PikPak or enable local libtorrent to manage torrents</div></li>';
     return;
   }
-  const items = await api('/api/torrent');
-  torrentList.innerHTML = '';
-  if (!items.length) {
+
+  const [localItems, cloudItems] = await Promise.all([
+    localAvailable ? api('/api/torrent').catch(() => []) : Promise.resolve([]),
+    pikpakAvailable ? api('/api/pikpak/tasks').catch(() => []) : Promise.resolve([]),
+  ]);
+
+  if (!localItems.length && !cloudItems.length) {
     torrentList.innerHTML = '<li class="item"><div class="item-sub">No active torrents — paste a magnet or drop a .torrent file</div></li>';
     return;
   }
 
-  for (const t of items) {
-    const card = document.createElement('li');
-    card.className = 'torrent-card';
-    card.innerHTML = `
-      <div class="torrent-card-header">
-        <div>
-          <div class="torrent-name">${esc(t.name || 'Torrent')}</div>
-          <div class="torrent-meta">${esc(t.state || '')} · ${t.peers || 0} peers · ↓ ${fmtSpeed(t.download_rate)} · ↑ ${fmtSpeed(t.upload_rate)}</div>
-        </div>
-        <div class="torrent-actions">
-          <button type="button" data-act="play" title="Play best video">▶</button>
-          <button type="button" data-act="${t.paused ? 'resume' : 'pause'}">${t.paused ? '▶' : '⏸'}</button>
-          <button type="button" data-act="remove" title="Remove">✕</button>
-        </div>
-      </div>
-      <div class="torrent-progress"><div class="torrent-progress-bar" style="width:${t.progress || 0}%"></div></div>
-      <div class="torrent-files" data-files="${t.id}">Loading files...</div>
-    `;
-
-    card.querySelectorAll('.torrent-actions button').forEach((btn) => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const act = btn.dataset.act;
-        if (act === 'play') {
-          try { await playTorrent(t.id); } catch (err) { toast(err.message, 5000); }
-        } else if (act === 'pause') {
-          await api(`/api/torrent/${t.id}/pause`, { method: 'POST' });
-          refreshTorrents();
-        } else if (act === 'resume') {
-          await api(`/api/torrent/${t.id}/resume`, { method: 'POST' });
-          refreshTorrents();
-        } else if (act === 'remove') {
-          await api(`/api/torrent/${t.id}?delete_files=false`, { method: 'DELETE' });
-          refreshTorrents();
-        }
-      });
-    });
-
-    torrentList.appendChild(card);
-    loadTorrentFiles(t.id, card.querySelector(`[data-files="${t.id}"]`));
-  }
+  cloudItems.forEach(renderPikpakTaskCard);
+  localItems.forEach(renderLocalTorrentCard);
 }
 
 async function loadTorrentFiles(tid, container) {
@@ -430,17 +568,28 @@ async function initPikpak() {
   } catch (_) {}
 }
 
+function shouldPollCloudStatus() {
+  return appStatus?.pikpak?.configured && (
+    cloudPollActive
+    || isPikpakMedia(currentMedia)
+  );
+}
+
 function startTorrentPolling() {
   clearInterval(torrentPollTimer);
   torrentPollTimer = setInterval(() => {
     if ($('#panel-torrents').classList.contains('active')) refreshTorrents();
+    else if (shouldPollCloudStatus()) updateCloudStatus();
   }, 3000);
 }
 
 async function playUrl(url, formatId = null, resumePos = 0) {
   if (!url) return;
-  if (isMagnet(url) && appStatus?.pikpak?.configured) {
+  const pikpakMagnet = isMagnet(url) && appStatus?.pikpak?.configured;
+  if (pikpakMagnet) {
     toast('Sending to PikPak cloud...', 8000);
+    cloudPollActive = true;
+    updateCloudStatus();
   } else if (isMagnet(url)) {
     toast('Starting torrent — fetching metadata...', 8000);
   } else {
@@ -479,12 +628,15 @@ async function playUrl(url, formatId = null, resumePos = 0) {
 
     toast('Playing: ' + (info.title || 'media'));
     wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
+    if (isPikpakMedia(info)) updateCloudStatus();
   } catch (e) {
     const msg = e.message || String(e);
     toast('Error: ' + msg, 6000);
     if (/403|forbidden|blocked/i.test(msg)) {
       toast('Tip: Try the MPV button, or log into the site in Chrome/Edge first', 8000);
     }
+  } finally {
+    cloudPollActive = isPikpakMedia(currentMedia);
   }
 }
 
@@ -641,7 +793,11 @@ async function initStatus() {
   $('#remote-url').textContent = remote + ' (tap to copy)';
   $('#remote-url').onclick = () => { navigator.clipboard.writeText(remote); toast('Remote URL copied'); };
   if (!st.mpv_available) $('#mpv-btn').style.opacity = '0.4';
-  if (!st.torrent_available && !st.pikpak?.configured) $('#torrent-add-btn').style.opacity = '0.4';
+  if (!st.torrent_available && !st.pikpak?.configured) {
+    $('#torrent-add-btn').style.opacity = '0.4';
+  } else {
+    $('#torrent-add-btn').style.opacity = '1';
+  }
   await initPikpak();
   startTorrentPolling();
 }

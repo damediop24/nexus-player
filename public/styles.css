@@ -784,6 +784,23 @@ dialog textarea {
 .pikpak-status { font-size: 0.72rem; color: var(--muted); margin-top: 0.45rem; }
 .pikpak-status.ok { color: var(--success); }
 
+.cloud-status {
+  margin-top: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.cloud-status.hidden { display: none; }
+.cloud-status-text {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+.cloud-status.complete .cloud-status-text { color: var(--success); }
+.cloud-status.error .cloud-status-text { color: var(--danger, #e55); }
+.torrent-card.cloud .torrent-meta { color: var(--accent-2, var(--accent)); }
+
 .torrent-file-btn { cursor: pointer; display: inline-flex; align-items: center; }
 
 .torrent-list { list-style: none; overflow-y: auto; flex: 1; }

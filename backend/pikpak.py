@@ -9,6 +9,7 @@ from db import get_settings, set_setting
 HAS_PIKPAK = bool(importlib.util.find_spec('pikpakapi'))
 
 _client = None
+_active_jobs: dict[str, dict] = {}
 
 
 def _run(coro):
@@ -123,6 +124,88 @@ def _extract_stream_url(file_data: dict) -> Optional[str]:
     return file_data.get('web_content_link')
 
 
+def _phase_label(phase: str) -> str:
+    if not phase:
+        return 'unknown'
+    return phase.replace('PHASE_TYPE_', '').lower()
+
+
+def _task_source(task: dict) -> str:
+    params = task.get('params') or {}
+    if isinstance(params, dict):
+        url_obj = params.get('url') or {}
+        if isinstance(url_obj, dict):
+            return url_obj.get('url') or ''
+        if isinstance(url_obj, str):
+            return url_obj
+    return task.get('url') or ''
+
+
+def _normalize_task(task: dict) -> dict:
+    phase = task.get('phase') or task.get('phase_type') or ''
+    phase_short = _phase_label(phase)
+
+    progress = task.get('progress')
+    if progress is None:
+        progress = 100 if phase_short == 'complete' else 0
+    progress = float(progress)
+    if progress <= 1:
+        progress *= 100
+
+    ref = task.get('reference_resource') or {}
+    file_obj = ref if ref.get('kind', '').startswith('drive#file') else (ref.get('file') or {})
+
+    name = (
+        task.get('name')
+        or task.get('file_name')
+        or ref.get('name')
+        or file_obj.get('name')
+        or 'PikPak task'
+    )
+
+    file_size = int(
+        task.get('file_size')
+        or task.get('file_size_byte')
+        or ref.get('size')
+        or file_obj.get('size')
+        or 0
+    )
+
+    speed = int(task.get('speed') or task.get('download_speed') or 0)
+    file_id = ref.get('id') or file_obj.get('id') or task.get('file_id')
+
+    return {
+        'id': task.get('id'),
+        'type': 'pikpak',
+        'name': name,
+        'phase': phase_short,
+        'state': phase_short,
+        'progress': round(progress, 1),
+        'file_size': file_size,
+        'download_rate': speed,
+        'upload_rate': 0,
+        'peers': 0,
+        'source': _task_source(task),
+        'file_id': file_id,
+        'task_id': task.get('id'),
+        'error': task.get('message') or task.get('error'),
+        'cloud': True,
+        'paused': False,
+    }
+
+
+def track_job(task_id: str, file_id: str, source: str, label: str = ''):
+    if not task_id:
+        return
+    _active_jobs[task_id] = {
+        'task_id': task_id,
+        'file_id': file_id,
+        'source': source,
+        'label': label,
+        'started_at': time.time(),
+    }
+
+
 def _pick_video_file(files: list[dict]) -> Optional[dict]:
     video_exts = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.wmv', '.ts'}
     videos = []
@@ -149,6 +232,8 @@ async def _resolve_async(source: str, label: str) -> dict:
 
     if not file_id:
         raise RuntimeError('PikPak did not return a file id for this torrent')
+
+    track_job(task_id, file_id, source, label)
 
     deadline = time.time() + 600
     while time.time() < deadline:
@@ -207,7 +292,52 @@ async def _resolve_async(source: str, label: str) -> dict:
             'Accept': '*/*',
         },
         'resolved_with': 'pikpak-cloud',
+        'pikpak_task_id': task_id,
+        'pikpak_file_id': file_id,
     }
+
+
+async def _list_tasks_async(limit: int = 50) -> list[dict]:
+    client = await _get_client()
+    phases = [
+        'PHASE_TYPE_RUNNING',
+        'PHASE_TYPE_PENDING',
+        'PHASE_TYPE_COMPLETE',
+        'PHASE_TYPE_ERROR',
+    ]
+    result = await client.offline_list(size=limit, phase=phases)
+    tasks = result.get('tasks') or []
+    normalized = [_normalize_task(t) for t in tasks]
+
+    seen = {t['id'] for t in normalized if t.get('id')}
+    for job in _active_jobs.values():
+        tid = job.get('task_id')
+        if tid and tid not in seen:
+            normalized.insert(0, {
+                'id': tid,
+                'type': 'pikpak',
+                'name': job.get('label') or 'PikPak download',
+                'phase': 'running',
+                'state': 'running',
+                'progress': 0,
+                'file_size': 0,
+                'download_rate': 0,
+                'upload_rate': 0,
+                'peers': 0,
+                'source': job.get('source') or '',
+                'file_id': job.get('file_id'),
+                'task_id': tid,
+                'error': None,
+                'cloud': True,
+                'paused': False,
+            })
+    return normalized
+
+
+def list_tasks(limit: int = 50) -> list[dict]:
+    if not is_configured():
+        return []
+    return _run(_list_tasks_async(limit))
 
 
 def resolve_via_pikpak(source: str, label: str = 'PikPak torrent') -> dict:

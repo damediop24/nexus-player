@@ -14,13 +14,13 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Web
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from db import get_conn, get_settings, init_db, row_to_dict, set_setting
 from resolver import DOWNLOADS, HAS_CURL_CFFI, _ffmpeg_path, download_media, find_mpv, launch_mpv, resolve_url
 from streams import create_token, get_token
-from torrent import HAS_LIBTORRENT, get_manager, is_magnet, is_torrent_bytes, parse_range_header
-from pikpak import HAS_PIKPAK, configure as pikpak_configure, get_status as pikpak_status, is_configured as pikpak_ready, resolve_via_pikpak, set_enabled as pikpak_set_enabled, test_login as pikpak_test_login, torrent_bytes_to_magnet
+from torrent import HAS_LIBTORRENT, get_manager, is_magnet, is_torrent_bytes, normalize_url, parse_range_header
+from pikpak import HAS_PIKPAK, configure as pikpak_configure, get_status as pikpak_status, is_configured as pikpak_ready, list_tasks as pikpak_list_tasks, resolve_via_pikpak, set_enabled as pikpak_set_enabled, test_login as pikpak_test_login, torrent_bytes_to_magnet
 
 ROOT = Path(__file__).parent.parent
 PUBLIC = ROOT / 'public'
@@ -41,11 +41,21 @@ class ResolveRequest(BaseModel):
     url: str
     format_id: Optional[str] = None
 
+    @field_validator('url', mode='before')
+    @classmethod
+    def _normalize_resolve_url(cls, value):
+        return normalize_url(value) if value else value
+
 
 class PlayRequest(BaseModel):
     url: str
     format_id: Optional[str] = None
     title: Optional[str] = None
+
+    @field_validator('url', mode='before')
+    @classmethod
+    def _normalize_play_url(cls, value):
+        return normalize_url(value) if value else value
 
 
 class ProgressRequest(BaseModel):
@@ -174,7 +184,7 @@ def _make_play_response(info: dict, source_url: str):
 def status():
     return {
         'name': 'Nexus Player',
-        'version': '2.1.0',
+        'version': '2.2.1',
         'torrent_available': HAS_LIBTORRENT,
         'pikpak': pikpak_status(),
         'lan_ip': _lan_ip(),
@@ -580,6 +590,18 @@ def api_pikpak_enable(req: PikPakEnableRequest):
     return {'ok': True, **pikpak_status()}
 
 
+@app.get('/api/pikpak/tasks')
+def api_pikpak_tasks(limit: int = 50):
+    if not HAS_PIKPAK:
+        return []
+    if not pikpak_ready():
+        return []
+    try:
+        return pikpak_list_tasks(limit=min(limit, 100))
+    except Exception as e:
+        raise HTTPException(400, f'PikPak tasks: {e}')
+
+
 @app.get('/api/torrent')
 def api_torrent_list():
     if not HAS_LIBTORRENT:
@@ -589,8 +611,27 @@ def api_torrent_list():
 
 @app.post('/api/torrent/add')
 async def api_torrent_add(magnet: Optional[str] = Form(None), file: UploadFile = File(None)):
+    if magnet:
+        magnet = normalize_url(magnet)
+
+    if magnet and is_magnet(magnet):
+        if pikpak_ready() and HAS_PIKPAK:
+            try:
+                info = resolve_via_pikpak(magnet, 'Magnet link')
+                play = _make_play_response(info, magnet)
+                return {'type': 'pikpak', 'pikpak': True, 'files': [], **play}
+            except Exception as e:
+                if not HAS_LIBTORRENT:
+                    raise HTTPException(400, f'PikPak failed: {e}')
+        if not HAS_LIBTORRENT:
+            raise HTTPException(400, 'Torrent support requires PikPak login or libtorrent')
+        mgr = get_manager()
+        tid = mgr.add_magnet(magnet)
+        mgr.wait_metadata(tid)
+        return {'id': tid, **mgr.status(tid), 'files': mgr.list_files(tid)}
+
     if not HAS_LIBTORRENT:
-        raise HTTPException(400, 'Torrent support requires libtorrent')
+        raise HTTPException(400, 'Torrent support requires PikPak login or libtorrent')
 
     mgr = get_manager()
 
@@ -600,17 +641,6 @@ async def api_torrent_add(magnet: Optional[str] = Form(None), file: UploadFile =
             tid = mgr.add_torrent_data(data, file.filename)
             mgr.wait_metadata(tid)
             return {'id': tid, **mgr.status(tid), 'files': mgr.list_files(tid)}
-
-    if magnet and is_magnet(magnet):
-        if pikpak_ready() and HAS_PIKPAK:
-            try:
-                info = resolve_via_pikpak(magnet.strip(), 'Magnet link')
-                return {'type': 'pikpak', 'name': info.get('title'), 'files': [], 'pikpak': True, **info}
-            except Exception:
-                pass
-        tid = mgr.add_magnet(magnet.strip())
-        mgr.wait_metadata(tid)
-        return {'id': tid, **mgr.status(tid), 'files': mgr.list_files(tid)}
 
     raise HTTPException(400, 'Provide a magnet link or .torrent file')
 
@@ -768,9 +798,11 @@ async def upload_file(file: UploadFile = File(...)):
             try:
                 magnet = torrent_bytes_to_magnet(raw)
                 info = resolve_via_pikpak(magnet, filename)
-                return {'type': 'pikpak', 'filename': filename, **info}
-            except Exception:
-                pass
+                play = _make_play_response(info, magnet)
+                return {'type': 'pikpak', 'filename': filename, **play}
+            except Exception as e:
+                if not HAS_LIBTORRENT:
+                    raise HTTPException(400, f'PikPak failed: {e}')
         if HAS_LIBTORRENT:
             mgr = get_manager()
             info = mgr.resolve_torrent_file(raw, filename)

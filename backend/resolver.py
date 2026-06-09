@@ -619,21 +619,49 @@ def _cdn_download_fallback(url):
     }
 
 
-def resolve_url(url, format_id=None):
-    from torrent import HAS_LIBTORRENT, get_manager, is_magnet
+def _resolve_magnet(url, format_id=None):
+    from torrent import HAS_LIBTORRENT, get_manager
 
-    if is_magnet(url):
+    pikpak_error = None
+    try:
         from pikpak import is_configured as pikpak_ready, resolve_via_pikpak
         if pikpak_ready():
             try:
                 return resolve_via_pikpak(url, 'Magnet link')
-            except Exception:
-                pass
-        if not HAS_LIBTORRENT:
-            raise RuntimeError('Torrent support requires libtorrent. Run: pip install libtorrent')
-        mgr = get_manager()
-        idx = int(format_id) if format_id is not None and str(format_id).isdigit() else None
-        return mgr.resolve_for_play(url, idx)
+            except Exception as exc:
+                pikpak_error = str(exc)
+    except Exception as exc:
+        pikpak_error = str(exc)
+
+    if HAS_LIBTORRENT:
+        try:
+            mgr = get_manager()
+            idx = int(format_id) if format_id is not None and str(format_id).isdigit() else None
+            return mgr.resolve_for_play(url, idx)
+        except Exception as exc:
+            if pikpak_error:
+                raise RuntimeError(
+                    f'PikPak failed: {pikpak_error}. Local torrent failed: {exc}'
+                ) from exc
+            raise
+
+    if pikpak_error:
+        raise RuntimeError(
+            f'PikPak failed: {pikpak_error}. '
+            'Open the Torrents tab and re-save your PikPak login.'
+        )
+    raise RuntimeError(
+        'Magnet links need PikPak (Torrents tab → Save & Login) or libtorrent installed.'
+    )
+
+
+def resolve_url(url, format_id=None):
+    from torrent import is_magnet, normalize_url
+
+    url = normalize_url(url)
+
+    if is_magnet(url):
+        return _resolve_magnet(url, format_id)
 
     if _is_stremio_resolver(url):
         return _resolve_stremio_stream(url)
@@ -646,6 +674,9 @@ def resolve_url(url, format_id=None):
         if probe:
             return _direct_media_response(url, probe)
         return _direct_media_response(url, _cdn_download_fallback(url))
+
+    if is_magnet(url):
+        return _resolve_magnet(url, format_id)
 
     last_error = None
 
@@ -682,6 +713,12 @@ def resolve_url(url, format_id=None):
 
 
 def download_media(url, format_id=None, on_progress=None):
+    from torrent import is_magnet, normalize_url
+
+    url = normalize_url(url)
+    if is_magnet(url):
+        raise RuntimeError('Magnet downloads are not supported. Play the torrent instead.')
+
     outtmpl = str(DOWNLOADS / '%(title).200B [%(id)s].%(ext)s')
 
     def hook(d):

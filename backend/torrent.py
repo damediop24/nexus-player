@@ -24,8 +24,18 @@ _manager = None
 _manager_lock = threading.Lock()
 
 
+def normalize_url(url: str) -> str:
+    from urllib.parse import unquote
+
+    u = unquote((url or '').strip().lstrip('\ufeff'))
+    if len(u) >= 2 and u[0] == u[-1] and u[0] in '"\'':
+        u = u[1:-1].strip()
+    return u
+
+
 def is_magnet(url: str) -> bool:
-    return (url or '').strip().lower().startswith('magnet:')
+    u = normalize_url(url).lower()
+    return u.startswith('magnet:') or u.startswith('magnet%3a')
 
 
 def is_torrent_bytes(data: bytes) -> bool:
@@ -69,7 +79,7 @@ class TorrentManager:
         return tid
 
     def add_magnet(self, magnet: str) -> str:
-        magnet = magnet.strip()
+        magnet = normalize_url(magnet)
         if not is_magnet(magnet):
             raise ValueError('Not a magnet link')
 
