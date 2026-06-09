@@ -1759,17 +1759,57 @@ subtitleSelect.addEventListener('change', () => {
   track.addEventListener('load', () => { track.track.mode = 'showing'; });
 });
 
-$('#pip-btn').addEventListener('click', async () => {
+function isMobileLayout() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function setSidebarOpen(open) {
+  const sidebar = $('#sidebar');
+  const backdrop = $('#sidebar-backdrop');
+  if (!isMobileLayout()) {
+    sidebar?.classList.remove('open');
+    if (backdrop) backdrop.hidden = true;
+    return;
+  }
+  sidebar?.classList.toggle('open', open);
+  if (backdrop) backdrop.hidden = !open;
+}
+
+$('#sidebar-toggle')?.addEventListener('click', () => {
+  const sidebar = $('#sidebar');
+  setSidebarOpen(!sidebar?.classList.contains('open'));
+});
+
+$('#sidebar-backdrop')?.addEventListener('click', () => setSidebarOpen(false));
+
+$('#mobile-more-btn')?.addEventListener('click', () => setSidebarOpen(true));
+
+$$('.item-list').forEach((list) => {
+  list.addEventListener('click', () => {
+    if (isMobileLayout()) setSidebarOpen(false);
+  });
+});
+
+window.addEventListener('resize', () => {
+  if (!isMobileLayout()) setSidebarOpen(false);
+});
+
+async function togglePip() {
   try {
     if (document.pictureInPictureElement) await document.exitPictureInPicture();
     else await video.requestPictureInPicture();
   } catch (_) { toast('PiP not available'); }
-});
+}
 
-$('#fs-btn').addEventListener('click', () => {
+function toggleFullscreen() {
   const wrap = $('#player-wrap');
   document.fullscreenElement ? document.exitFullscreen() : wrap.requestFullscreen();
-});
+}
+
+$('#pip-btn').addEventListener('click', () => togglePip());
+$('#mobile-pip-btn')?.addEventListener('click', () => togglePip());
+$('#fs-btn').addEventListener('click', () => toggleFullscreen());
+$('#mobile-fs-btn')?.addEventListener('click', () => toggleFullscreen());
 
 $('#fit-select').addEventListener('change', () => setFitMode($('#fit-select').value));
 $$('.fit-btn').forEach((btn) => {

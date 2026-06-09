@@ -14,29 +14,33 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-icon">▶</span>
-        <span class="brand-name">Nexus Player</span>
-        <span class="brand-badge">PRO</span>
+      <div class="topbar-row topbar-row-head">
+        <div class="brand">
+          <span class="brand-icon">▶</span>
+          <span class="brand-name">Nexus</span>
+          <span class="brand-badge">PRO</span>
+        </div>
+        <div class="topbar-head-actions">
+          <button id="sidebar-toggle" class="btn btn-ghost btn-icon only-mobile" type="button" title="Library" aria-label="Library">☰</button>
+          <button id="loop-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Loop (R)">🔁</button>
+          <button id="shuffle-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Shuffle queue">🔀</button>
+          <button id="screenshot-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Screenshot (S)">📷</button>
+          <button id="mpv-btn" class="btn btn-ghost btn-icon" type="button" title="Open in local MPV">MPV</button>
+          <button id="pip-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Picture-in-Picture">PiP</button>
+          <button id="fs-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Fullscreen">⛶</button>
+        </div>
       </div>
-
-      <div class="url-bar">
-        <input id="url-input" type="text" placeholder="Paste URL, magnet:?xt=..., or drop a file..." spellcheck="false" />
-        <button id="play-btn" class="btn btn-accent" type="button">Play</button>
-        <button id="torrent-add-btn" class="btn btn-ghost" type="button" title="Add magnet / .torrent">🧲</button>
-        <button id="resolve-btn" class="btn btn-ghost" type="button" title="Inspect formats">Inspect</button>
-      </div>
-
-      <div class="topbar-actions">
-        <button id="loop-btn" class="btn btn-ghost" type="button" title="Loop (R)">🔁</button>
-        <button id="shuffle-btn" class="btn btn-ghost" type="button" title="Shuffle queue">🔀</button>
-        <button id="screenshot-btn" class="btn btn-ghost" type="button" title="Screenshot (S)">📷</button>
-        <button id="mpv-btn" class="btn btn-ghost" type="button" title="Open in local MPV on your PC">MPV</button>
-        <button id="pip-btn" class="btn btn-ghost" type="button" title="Picture-in-Picture">PiP</button>
-        <button id="fs-btn" class="btn btn-ghost" type="button" title="Fullscreen">⛶</button>
+      <div class="topbar-row topbar-row-play">
+        <div class="url-bar">
+          <input id="url-input" type="text" placeholder="Paste URL or magnet..." spellcheck="false" />
+          <button id="play-btn" class="btn btn-accent" type="button">Play</button>
+          <button id="torrent-add-btn" class="btn btn-ghost btn-icon" type="button" title="Add magnet">🧲</button>
+          <button id="resolve-btn" class="btn btn-ghost btn-icon only-desktop" type="button" title="Inspect formats">⋯</button>
+        </div>
       </div>
     </header>
 
+    <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
     <div class="main">
       <section class="player-section">
         <div class="player-wrap" id="player-wrap">
@@ -84,24 +88,30 @@
               </div>
             </div>
 
-            <div class="controls-row">
-              <div class="controls-left">
+            <div class="controls-primary">
+              <div class="transport">
                 <button class="ctrl-btn" id="prev-btn" title="Previous">⏮</button>
                 <button class="ctrl-btn ctrl-btn-lg" id="toggle-btn" title="Play/Pause">▶</button>
                 <button class="ctrl-btn" id="next-btn" title="Next">⏭</button>
-                <div class="volume-wrap">
-                  <button class="ctrl-btn" id="mute-btn" title="Mute">🔊</button>
-                  <input type="range" id="volume-slider" min="0" max="200" value="100" />
-                </div>
-                <span class="now-playing" id="now-playing">No media loaded</span>
               </div>
+              <div class="volume-wrap">
+                <button class="ctrl-btn" id="mute-btn" title="Mute">🔊</button>
+                <input type="range" id="volume-slider" min="0" max="200" value="100" />
+              </div>
+              <span class="now-playing" id="now-playing">No media loaded</span>
+              <div class="player-quick-actions only-mobile">
+                <button class="ctrl-btn" id="mobile-pip-btn" type="button" title="Picture-in-Picture">⊡</button>
+                <button class="ctrl-btn" id="mobile-fs-btn" type="button" title="Fullscreen">⛶</button>
+              </div>
+            </div>
 
-              <div class="controls-right">
+            <div class="controls-secondary">
+              <div class="controls-chips">
                 <select id="quality-select" class="ctrl-select" title="Quality">
-                  <option value="">Auto quality</option>
+                  <option value="">Quality</option>
                 </select>
                 <select id="subtitle-select" class="ctrl-select" title="Subtitles">
-                  <option value="">No subtitles</option>
+                  <option value="">Subs</option>
                 </select>
                 <select id="fit-select" class="ctrl-select" title="Display mode (V)">
                   <option value="contain" selected>Fit</option>
@@ -121,11 +131,14 @@
                   <option value="3">3×</option>
                   <option value="4">4×</option>
                 </select>
-                <button class="ctrl-btn" id="ab-btn" title="A-B Loop (set A then B)">A-B</button>
-                <button class="ctrl-btn" id="fav-btn" title="Add to favorites">★</button>
-                <button class="ctrl-btn" id="playlist-btn" title="Add to playlist">+♫</button>
+              </div>
+              <div class="controls-tools">
+                <button class="ctrl-btn" id="ab-btn" title="A-B Loop">A-B</button>
+                <button class="ctrl-btn" id="fav-btn" title="Favorite">★</button>
+                <button class="ctrl-btn" id="playlist-btn" title="Playlist">+♫</button>
                 <button class="ctrl-btn" id="download-btn" title="Download">↓</button>
-                <button class="ctrl-btn" id="repeat-btn" title="Repeat queue">↻</button>
+                <button class="ctrl-btn" id="repeat-btn" title="Repeat">↻</button>
+                <button class="ctrl-btn only-mobile" id="mobile-more-btn" type="button" title="More actions">⋯</button>
               </div>
             </div>
           </div>
@@ -149,7 +162,8 @@
         </div>
       </section>
 
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-handle only-mobile"></div>
         <nav class="tabs">
           <button class="tab active" data-tab="queue">Queue</button>
           <button class="tab" data-tab="history">History</button>
