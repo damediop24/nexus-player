@@ -107,7 +107,7 @@ def test_login(username: str, password: str) -> dict:
         client = PikPakApi(username=username, password=password)
         await client.login()
         await client.refresh_access_token()
-        user = await client.get_user_info()
+        user = client.get_user_info()
         return {'ok': True, 'user': user.get('name') or user.get('email') or username}
 
     return _run(_test())
