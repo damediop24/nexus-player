@@ -9,6 +9,9 @@ const favoritesList = $('#favorites-list');
 const downloadsList = $('#downloads-list');
 const libraryList = $('#library-list');
 const playlistsContainer = $('#playlists-container');
+const torrentList = $('#torrent-list');
+let torrentPollTimer = null;
+let appStatus = null;
 const qualitySelect = $('#quality-select');
 const subtitleSelect = $('#subtitle-select');
 const speedSelect = $('#speed-select');
@@ -82,6 +85,17 @@ function fmtSize(b) {
   if (b > 1e9) return (b / 1e9).toFixed(1) + ' GB';
   if (b > 1e6) return (b / 1e6).toFixed(1) + ' MB';
   return (b / 1e3).toFixed(0) + ' KB';
+}
+
+function fmtSpeed(bps) {
+  if (!bps) return '0 B/s';
+  if (bps > 1e6) return (bps / 1e6).toFixed(1) + ' MB/s';
+  if (bps > 1e3) return (bps / 1e3).toFixed(0) + ' KB/s';
+  return bps + ' B/s';
+}
+
+function isMagnet(url) {
+  return /^magnet:\?/i.test((url || '').trim());
 }
 
 function getDuration() {
@@ -290,9 +304,148 @@ function updateAbMarkers() {
   if (show && dur) updateProgress();
 }
 
+async function playTorrent(tid, fileIndex = null) {
+  toast('Starting torrent stream...', 5000);
+  const body = fileIndex != null ? { file_index: fileIndex } : {};
+  const info = await api(`/api/torrent/${tid}/play`, { method: 'POST', body: JSON.stringify(body) });
+  currentMedia = info;
+  overlay.classList.add('hidden');
+  setMeta(info);
+  populateFormats(info.formats || [], info.best_format_id);
+  populateSubtitles(info.subtitles || []);
+  loadSource(info.play_url, info.stream_type);
+  toast('Playing torrent: ' + (info.title || 'media'));
+}
+
+async function addMagnet(magnet, autoplay = true) {
+  const fd = new FormData();
+  fd.append('magnet', magnet.trim());
+  toast('Adding torrent...', 5000);
+  const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
+    if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.detail || 'Add failed')));
+    return r.json();
+  });
+  await refreshTorrents();
+  toast('Torrent added: ' + (res.name || 'magnet'));
+  if (autoplay) {
+    if (res.type === 'pikpak' || res.pikpak) {
+      await playUrl(magnet);
+    } else {
+      const videoFile = (res.files || []).find((f) => f.is_video);
+      if (videoFile) await playTorrent(res.id, videoFile.index);
+    }
+  }
+  return res;
+}
+
+async function refreshTorrents() {
+  if (!appStatus?.torrent_available) {
+    torrentList.innerHTML = '<li class="item"><div class="item-sub">Local libtorrent not available on this server</div></li>';
+    return;
+  }
+  const items = await api('/api/torrent');
+  torrentList.innerHTML = '';
+  if (!items.length) {
+    torrentList.innerHTML = '<li class="item"><div class="item-sub">No active torrents — paste a magnet or drop a .torrent file</div></li>';
+    return;
+  }
+
+  for (const t of items) {
+    const card = document.createElement('li');
+    card.className = 'torrent-card';
+    card.innerHTML = `
+      <div class="torrent-card-header">
+        <div>
+          <div class="torrent-name">${esc(t.name || 'Torrent')}</div>
+          <div class="torrent-meta">${esc(t.state || '')} · ${t.peers || 0} peers · ↓ ${fmtSpeed(t.download_rate)} · ↑ ${fmtSpeed(t.upload_rate)}</div>
+        </div>
+        <div class="torrent-actions">
+          <button type="button" data-act="play" title="Play best video">▶</button>
+          <button type="button" data-act="${t.paused ? 'resume' : 'pause'}">${t.paused ? '▶' : '⏸'}</button>
+          <button type="button" data-act="remove" title="Remove">✕</button>
+        </div>
+      </div>
+      <div class="torrent-progress"><div class="torrent-progress-bar" style="width:${t.progress || 0}%"></div></div>
+      <div class="torrent-files" data-files="${t.id}">Loading files...</div>
+    `;
+
+    card.querySelectorAll('.torrent-actions button').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const act = btn.dataset.act;
+        if (act === 'play') {
+          try { await playTorrent(t.id); } catch (err) { toast(err.message, 5000); }
+        } else if (act === 'pause') {
+          await api(`/api/torrent/${t.id}/pause`, { method: 'POST' });
+          refreshTorrents();
+        } else if (act === 'resume') {
+          await api(`/api/torrent/${t.id}/resume`, { method: 'POST' });
+          refreshTorrents();
+        } else if (act === 'remove') {
+          await api(`/api/torrent/${t.id}?delete_files=false`, { method: 'DELETE' });
+          refreshTorrents();
+        }
+      });
+    });
+
+    torrentList.appendChild(card);
+    loadTorrentFiles(t.id, card.querySelector(`[data-files="${t.id}"]`));
+  }
+}
+
+async function loadTorrentFiles(tid, container) {
+  try {
+    const files = await api(`/api/torrent/${tid}/files`);
+    container.innerHTML = '';
+    files.forEach((f) => {
+      const row = document.createElement('div');
+      row.className = 'torrent-file' + (f.is_video ? ' playable' : '');
+      row.innerHTML = `<span>${esc(f.name)} (${f.progress || 0}%)</span><span class="torrent-file-size">${fmtSize(f.size)}</span>`;
+      if (f.is_video) {
+        row.addEventListener('click', async () => {
+          try { await playTorrent(tid, f.index); } catch (e) { toast(e.message, 5000); }
+        });
+      }
+      container.appendChild(row);
+    });
+  } catch (_) {
+    container.textContent = 'Files unavailable';
+  }
+}
+
+async function initPikpak() {
+  try {
+    const st = appStatus?.pikpak || await api('/api/pikpak/status');
+    const el = $('#pikpak-status');
+    if (st.username) $('#pikpak-user').value = st.username;
+    $('#pikpak-enabled').checked = st.enabled !== false;
+    if (st.configured) {
+      el.textContent = `Logged in as ${st.username} — torrents use PikPak cloud`;
+      el.classList.add('ok');
+    } else if (st.available) {
+      el.textContent = 'Enter PikPak email & password to stream via cloud';
+    } else {
+      el.textContent = 'PikPak module not installed on server';
+    }
+  } catch (_) {}
+}
+
+function startTorrentPolling() {
+  clearInterval(torrentPollTimer);
+  torrentPollTimer = setInterval(() => {
+    if ($('#panel-torrents').classList.contains('active')) refreshTorrents();
+  }, 3000);
+}
+
 async function playUrl(url, formatId = null, resumePos = 0) {
   if (!url) return;
-  toast('Resolving stream...');
+  if (isMagnet(url) && appStatus?.pikpak?.configured) {
+    toast('Sending to PikPak cloud...', 8000);
+  } else if (isMagnet(url)) {
+    toast('Starting torrent — fetching metadata...', 8000);
+  } else {
+    toast('Resolving stream...');
+  }
   urlInput.value = url;
 
   try {
@@ -482,11 +635,15 @@ function connectWs() {
 }
 
 async function initStatus() {
-  const st = await api('/api/status');
+  appStatus = await api('/api/status');
+  const st = appStatus;
   const remote = `http://${st.lan_ip}:${st.port}`;
   $('#remote-url').textContent = remote + ' (tap to copy)';
   $('#remote-url').onclick = () => { navigator.clipboard.writeText(remote); toast('Remote URL copied'); };
   if (!st.mpv_available) $('#mpv-btn').style.opacity = '0.4';
+  if (!st.torrent_available && !st.pikpak?.configured) $('#torrent-add-btn').style.opacity = '0.4';
+  await initPikpak();
+  startTorrentPolling();
 }
 
 async function initSettings() {
@@ -589,6 +746,57 @@ progressHitarea.addEventListener('touchend', (e) => {
 
 /* ── Controls ── */
 $('#play-btn').addEventListener('click', () => playUrl(urlInput.value.trim()));
+$('#torrent-add-btn').addEventListener('click', () => {
+  const v = urlInput.value.trim();
+  if (isMagnet(v)) addMagnet(v);
+  else $('#torrent-dialog').showModal();
+});
+$('#torrent-paste-btn').addEventListener('click', () => $('#torrent-dialog').showModal());
+$('#torrent-dialog').addEventListener('close', async () => {
+  if ($('#torrent-dialog').returnValue !== 'ok') return;
+  const magnet = $('#magnet-text').value.trim();
+  if (!isMagnet(magnet)) { toast('Invalid magnet link'); return; }
+  try { await addMagnet(magnet); } catch (e) { toast(e.message, 5000); }
+});
+$('#torrent-file-input').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  toast('Adding torrent file...', 5000);
+  try {
+    const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
+      if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.detail || 'Failed')));
+      return r.json();
+    });
+    await refreshTorrents();
+    const videoFile = (res.files || []).find((f) => f.is_video);
+    if (videoFile) await playTorrent(res.id, videoFile.index);
+    else toast('Torrent added — pick a file to play');
+  } catch (err) { toast(err.message, 5000); }
+  e.target.value = '';
+});
+$('#refresh-torrents-btn').addEventListener('click', refreshTorrents);
+$('#pikpak-save-btn').addEventListener('click', async () => {
+  const username = $('#pikpak-user').value.trim();
+  const password = $('#pikpak-pass').value;
+  const enabled = $('#pikpak-enabled').checked;
+  if (!username || !password) { toast('Enter PikPak email and password'); return; }
+  try {
+    await api('/api/pikpak/configure', { method: 'POST', body: JSON.stringify({ username, password, enabled }) });
+    appStatus = await api('/api/status');
+    await initPikpak();
+    toast('PikPak connected — magnets will use your account');
+    $('#pikpak-pass').value = '';
+  } catch (e) { toast(e.message, 6000); }
+});
+$('#pikpak-enabled').addEventListener('change', async () => {
+  try {
+    await api('/api/pikpak/enable', { method: 'POST', body: JSON.stringify({ enabled: $('#pikpak-enabled').checked }) });
+    appStatus = await api('/api/status');
+    await initPikpak();
+  } catch (e) { toast(e.message); }
+});
 $('#resolve-btn').addEventListener('click', async () => {
   const url = urlInput.value.trim();
   if (!url) return;
@@ -790,6 +998,7 @@ $$('.tab').forEach((tab) => {
     $$('.tab').forEach((t) => t.classList.toggle('active', t === tab));
     $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${tab.dataset.tab}`));
     if (tab.dataset.tab === 'library') refreshLibrary();
+    if (tab.dataset.tab === 'torrents') { refreshTorrents(); initPikpak(); }
   });
 });
 
@@ -808,10 +1017,34 @@ document.addEventListener('drop', async (e) => {
   if (file) {
     const fd = new FormData();
     fd.append('file', file);
+    if (file.name.toLowerCase().endsWith('.torrent')) {
+      toast('Adding torrent...', 5000);
+      try {
+        const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
+          if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.detail || 'Failed')));
+          return r.json();
+        });
+        await refreshTorrents();
+        const videoFile = (res.files || []).find((f) => f.is_video);
+        if (videoFile) await playTorrent(res.id, videoFile.index);
+        else toast('Torrent added');
+      } catch (err) { toast(err.message, 5000); }
+      return;
+    }
     toast('Uploading...');
     const res = await fetch('/api/upload', { method: 'POST', body: fd }).then((r) => r.json());
-    playLocal(res.play_url, res.title);
-    toast('Playing local file');
+    if (res.play_url) {
+      if (res.play_url.startsWith('/api/torrent/') || res.type === 'torrent') {
+        const m = res.play_url.match(/\/api\/torrent\/([^/]+)\/stream\/(\d+)/);
+        if (m) await playTorrent(m[1], parseInt(m[2], 10));
+        else if (res.torrent_id) await playTorrent(res.torrent_id);
+      } else if (res.stream_url || res.type === 'pikpak') {
+        await playUrl(res.url || res.source_url || urlInput.value);
+      } else {
+        playLocal(res.play_url, res.title);
+      }
+    }
+    toast('Playing file');
     refreshLibrary();
   }
 });
@@ -820,7 +1053,10 @@ document.addEventListener('drop', async (e) => {
 document.addEventListener('paste', (e) => {
   if (e.target.matches('input, textarea')) return;
   const text = e.clipboardData.getData('text').trim();
-  if (/^https?:\/\//i.test(text)) {
+  if (/^magnet:\?/i.test(text)) {
+    urlInput.value = text;
+    playUrl(text);
+  } else if (/^https?:\/\//i.test(text)) {
     urlInput.value = text;
     playUrl(text);
   }
@@ -876,3 +1112,4 @@ refreshHistory();
 refreshFavorites();
 refreshDownloads();
 refreshPlaylists();
+refreshTorrents();

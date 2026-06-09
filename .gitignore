@@ -19,6 +19,8 @@ downloads/*
 !downloads/.gitkeep
 uploads/*
 !uploads/.gitkeep
+torrents/*
+!torrents/.gitkeep
 
 # IDE / OS
 .idea/

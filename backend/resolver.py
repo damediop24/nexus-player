@@ -620,6 +620,21 @@ def _cdn_download_fallback(url):
 
 
 def resolve_url(url, format_id=None):
+    from torrent import HAS_LIBTORRENT, get_manager, is_magnet
+
+    if is_magnet(url):
+        from pikpak import is_configured as pikpak_ready, resolve_via_pikpak
+        if pikpak_ready():
+            try:
+                return resolve_via_pikpak(url, 'Magnet link')
+            except Exception:
+                pass
+        if not HAS_LIBTORRENT:
+            raise RuntimeError('Torrent support requires libtorrent. Run: pip install libtorrent')
+        mgr = get_manager()
+        idx = int(format_id) if format_id is not None and str(format_id).isdigit() else None
+        return mgr.resolve_for_play(url, idx)
+
     if _is_stremio_resolver(url):
         return _resolve_stremio_stream(url)
 

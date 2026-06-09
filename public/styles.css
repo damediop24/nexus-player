@@ -759,6 +759,92 @@ dialog textarea {
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
+/* Torrents */
+.pikpak-box {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.pikpak-title { font-size: 0.82rem; font-weight: 600; margin-bottom: 0.25rem; }
+.pikpak-hint { font-size: 0.72rem; color: var(--muted); margin-bottom: 0.5rem; }
+.pikpak-box input {
+  width: 100%;
+  margin-bottom: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.45rem 0.55rem;
+  font-size: 0.78rem;
+}
+.pikpak-toggle { font-size: 0.75rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; }
+.pikpak-status { font-size: 0.72rem; color: var(--muted); margin-top: 0.45rem; }
+.pikpak-status.ok { color: var(--success); }
+
+.torrent-file-btn { cursor: pointer; display: inline-flex; align-items: center; }
+
+.torrent-list { list-style: none; overflow-y: auto; flex: 1; }
+
+.torrent-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.torrent-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.torrent-name { font-size: 0.8rem; font-weight: 600; word-break: break-word; }
+.torrent-meta { font-size: 0.68rem; color: var(--muted); margin-top: 0.2rem; }
+.torrent-actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
+.torrent-actions button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.torrent-actions button:hover { border-color: var(--accent); }
+
+.torrent-progress {
+  height: 4px;
+  background: var(--surface);
+  border-radius: 2px;
+  margin: 0.45rem 0;
+  overflow: hidden;
+}
+.torrent-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.3s;
+}
+
+.torrent-files { margin-top: 0.4rem; }
+.torrent-file {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.torrent-file:hover { background: var(--surface); }
+.torrent-file.playable { color: var(--accent); }
+.torrent-file-size { color: var(--muted); flex-shrink: 0; }
+
 /* Responsive */
 @media (max-width: 900px) {
   .main { flex-direction: column; }

@@ -6,3 +6,5 @@ aiofiles==24.1.0
 python-multipart==0.0.20
 websockets==14.1
 curl_cffi>=0.7.0
+libtorrent==2.0.13
+pikpakapi>=0.1.11

@@ -21,8 +21,9 @@
       </div>
 
       <div class="url-bar">
-        <input id="url-input" type="text" placeholder="Paste URL, magnet link, or drop a file..." spellcheck="false" />
+        <input id="url-input" type="text" placeholder="Paste URL, magnet:?xt=..., or drop a file..." spellcheck="false" />
         <button id="play-btn" class="btn btn-accent" type="button">Play</button>
+        <button id="torrent-add-btn" class="btn btn-ghost" type="button" title="Add magnet / .torrent">🧲</button>
         <button id="resolve-btn" class="btn btn-ghost" type="button" title="Inspect formats">Inspect</button>
       </div>
 
@@ -55,7 +56,7 @@
               <div class="drop-zone" id="drop-zone">
                 <div class="drop-icon">⬇</div>
                 <p>Drop URL or video file here</p>
-                <span class="hint">YouTube · Twitch · Vimeo · 1800+ sites via yt-dlp</span>
+                <span class="hint">YouTube · Magnets · .torrent · PikPak · Stremio · 1800+ sites</span>
               </div>
             </div>
           </div>
@@ -146,6 +147,7 @@
           <button class="tab" data-tab="playlists">Playlists</button>
           <button class="tab" data-tab="downloads">Downloads</button>
           <button class="tab" data-tab="library">Library</button>
+          <button class="tab" data-tab="torrents">Torrents</button>
         </nav>
 
         <div class="tab-panel active" id="panel-queue">
@@ -185,6 +187,26 @@
           <ul class="item-list" id="library-list"></ul>
         </div>
 
+        <div class="tab-panel" id="panel-torrents">
+          <div class="pikpak-box" id="pikpak-box">
+            <div class="pikpak-title">PikPak Cloud (optional)</div>
+            <p class="pikpak-hint">Streams torrents via your PikPak account — faster, works online.</p>
+            <input id="pikpak-user" type="text" placeholder="PikPak email" autocomplete="username" />
+            <input id="pikpak-pass" type="password" placeholder="PikPak password" autocomplete="current-password" />
+            <div class="panel-actions">
+              <button class="btn btn-sm" id="pikpak-save-btn" type="button">Save &amp; Login</button>
+              <label class="pikpak-toggle"><input id="pikpak-enabled" type="checkbox" checked /> Use PikPak</label>
+            </div>
+            <div class="pikpak-status" id="pikpak-status">Not configured</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-sm" id="torrent-paste-btn" type="button">Add magnet</button>
+            <label class="btn btn-sm btn-ghost torrent-file-btn">Add .torrent<input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden /></label>
+            <button class="btn btn-sm btn-ghost" id="refresh-torrents-btn" type="button">Refresh</button>
+          </div>
+          <ul class="torrent-list" id="torrent-list"></ul>
+        </div>
+
         <footer class="sidebar-footer">
           <div class="status-line">
             <span id="status-dot" class="status-dot"></span>
@@ -206,6 +228,17 @@
       <div class="dialog-actions">
         <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
         <button id="batch-submit" value="ok" class="btn btn-accent" type="submit">Queue all</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="torrent-dialog">
+    <form method="dialog">
+      <h3>Add magnet link</h3>
+      <textarea id="magnet-text" rows="4" placeholder="magnet:?xt=urn:btih:..."></textarea>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn btn-ghost" type="submit">Cancel</button>
+        <button id="magnet-submit" value="ok" class="btn btn-accent" type="submit">Add &amp; play</button>
       </div>
     </form>
   </dialog>

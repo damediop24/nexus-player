@@ -75,6 +75,7 @@ def init_db():
         'playback_rate': '1.0',
         'subtitle_lang': 'en',
         'fit_mode': 'contain',
+        'pikpak_enabled': 'false',
     }
     for key, value in defaults.items():
         conn.execute(
