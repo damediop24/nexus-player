@@ -188,6 +188,63 @@ fly open
 | Autoplay blocked | Click the video or ▶ button |
 | Site not supported | Update yt-dlp: `pip install -U yt-dlp` |
 
+## Telegram Bot (Restricted Content Downloader)
+
+Nexus Player now includes the **neex** Telegram bot for downloading photos, videos, audio, documents and text from private/restricted Telegram channels and posts (single or batch).
+
+Downloads (especially video/audio) are saved directly into the shared `downloads/` folder so they appear automatically in the **Library** tab of the web UI.
+
+### Setup
+
+1. Install (or re-install) dependencies so the bot packages are present:
+
+   ```bat
+   pip install -r requirements.txt
+   ```
+
+2. Configure the bot:
+
+   - Edit `bot/config.env`
+   - Fill in:
+     - `API_ID` + `API_HASH` → from https://my.telegram.org
+     - `BOT_TOKEN` → from @BotFather (`/newbot`)
+     - `SESSION_STRING` → from @TgDevToolBot (use the Pyrogram Session button and follow the flow)
+
+   > The account used for `SESSION_STRING` must be a member of the source chats/channels you want to download from.
+
+   Optional settings in the same file:
+   - `FORWARD_CHAT_ID` (the bot will auto-copy downloads to this channel/group if the bot has permission)
+   - `MAX_CONCURRENT_DOWNLOADS`, `BATCH_SIZE`, `FLOOD_WAIT_DELAY`
+
+3. Run the bot (separate process from the web player):
+
+   ```bat
+   start-bot.bat
+   ```
+
+   Or on Unix:
+   ```bash
+   chmod +x start-bot.sh
+   ./start-bot.sh
+   ```
+
+   The console will show "Bot Started!". Use the bot in Telegram by sending it post links or `/dl <link>`, `/bdl ...`, `/help`, etc.
+
+4. (Optional) Start everything:
+   - Run `start.bat` for the web player (port 8899)
+   - Run `start-bot.bat` for the downloader
+
+   TG downloads land in `downloads/<message_id>/...` and videos/audio will be browsable in the Nexus Library.
+
+### Notes
+
+- The bot is primarily intended for **local/desktop** use (it uses a user session to access restricted content).
+- Cloud deploys of Nexus (Render/Railway/Fly) run the web player only. The bot is not started automatically in Docker.
+- FFmpeg is already part of the Nexus setup (thumbnails + media info for the bot).
+- Without `TgCrypto` the bot works but is slower for crypto operations. Install Microsoft C++ Build Tools then `pip install tgcrypto` if you transfer lots of media.
+
+See also `bot/USAGE.md` (from the original neex project) for detailed command examples.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

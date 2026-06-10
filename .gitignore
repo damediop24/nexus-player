@@ -35,3 +35,12 @@ desktop.ini
 
 # Terminals / local tooling
 terminals/
+# Telegram bot runtime
+bot/logs.txt
+bot/downloads/
+bot/Assets/
+bot/__pycache__/
+*.session
+config.env
+config.env.local
+
