@@ -39,7 +39,7 @@ _YOUTUBE_HOSTS = (
     'youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com',
 )
 
-_URL_IN_TEXT_RE = re.compile(r'https?://[^\s<>"\']+|magnet:\?[^\s<>"\']+', re.I)
+_URL_IN_TEXT_RE = re.compile(r'https?://[^\s<>"\']+', re.I)
 
 _EROME_MP4_RE = re.compile(r'https?://v\d+\.erome\.com/[^\s"\'<>]+\.mp4', re.I)
 _SHEMALE6_VIDEO_RE = re.compile(r'https?://[^"\s\'<>]+\.(?:mp4|m3u8)[^"\s\'<>]*', re.I)
@@ -101,14 +101,20 @@ def _is_shemale6_page_url(url):
     return '/videos/' in lower or '/video/' in lower
 
 
-def normalize_play_url(url):
-    from torrent import normalize_url
+def _simple_normalize(url: str) -> str:
+    from urllib.parse import unquote
+    u = unquote((url or '').strip().lstrip('\ufeff'))
+    if len(u) >= 2 and u[0] == u[-1] and u[0] in '"\'':
+        u = u[1:-1].strip()
+    return u
 
-    url = normalize_url(url)
+
+def normalize_play_url(url):
     if not url:
         return url
 
-    if not url.startswith(('http://', 'https://', 'magnet:')):
+    url = _simple_normalize(url)
+    if not url.startswith(('http://', 'https://')):
         match = _URL_IN_TEXT_RE.search(url)
         if match:
             url = match.group(0).rstrip('.,;:!?)]}')
@@ -717,7 +723,7 @@ _CDN_DOWNLOAD_HOSTS = (
 )
 
 _STREMIO_RESOLVER_MARKERS = (
-    'torrentio.strem.fun',
+
     'strem.fun',
 )
 
@@ -822,7 +828,7 @@ def _stremio_request_headers(referer=None):
     return {
         'User-Agent': BROWSER_UA,
         'Accept': '*/*',
-        'Referer': referer or 'https://torrentio.strem.fun/',
+        'Referer': referer or '',
     }
 
 
@@ -891,21 +897,7 @@ def _resolve_stremio_url(url):
 
 def _resolve_stremio_stream(url):
     title = _title_from_stremio_url(url)
-    final_url = None
-    torrentio_meta = None
-
-    try:
-        from alldebrid import is_configured, resolve_torrentio_url
-        if is_configured():
-            torrentio_meta = resolve_torrentio_url(url)
-            if torrentio_meta:
-                final_url = torrentio_meta['stream_url']
-                title = torrentio_meta.get('title') or title
-    except Exception:
-        pass
-
-    if not final_url:
-        final_url = _resolve_stremio_url(url)
+    final_url = _resolve_stremio_url(url)
     if not final_url:
         raise RuntimeError(
             'Stremio resolver failed. The link may be expired or the debrid service is unavailable.'
@@ -930,12 +922,7 @@ def _resolve_stremio_stream(url):
     result['site'] = 'stremio'
     result['url'] = url
     result['title'] = title
-    if torrentio_meta:
-        result['requires_mpv'] = False
-        if torrentio_meta.get('filesize'):
-            result['formats'][0]['filesize'] = torrentio_meta['filesize']
-    else:
-        result['requires_mpv'] = False
+    result['requires_mpv'] = False
     return result
 
 
@@ -1489,49 +1476,11 @@ def _cdn_download_fallback(url):
     }
 
 
-def _resolve_magnet(url, format_id=None):
-    from torrent import HAS_LIBTORRENT, get_manager
-
-    alldebrid_error = None
-    try:
-        from alldebrid import is_configured as alldebrid_ready, resolve_magnet as resolve_via_alldebrid
-        if alldebrid_ready():
-            try:
-                return resolve_via_alldebrid(url, 'Magnet link')
-            except Exception as exc:
-                alldebrid_error = str(exc)
-    except Exception as exc:
-        alldebrid_error = str(exc)
-
-    if HAS_LIBTORRENT:
-        try:
-            mgr = get_manager()
-            idx = int(format_id) if format_id is not None and str(format_id).isdigit() else None
-            return mgr.resolve_for_play(url, idx)
-        except Exception as exc:
-            if alldebrid_error:
-                raise RuntimeError(
-                    f'AllDebrid failed: {alldebrid_error}. Local torrent failed: {exc}'
-                ) from exc
-            raise
-
-    if alldebrid_error:
-        raise RuntimeError(f'AllDebrid failed: {alldebrid_error}')
-    raise RuntimeError('Magnet links need AllDebrid or libtorrent installed.')
-
-
 def resolve_url(url, format_id=None):
-    from torrent import is_magnet
 
     url = normalize_play_url(url)
     if not url:
-        raise ResolveError('No URL provided', code='invalid_url', hint='Paste a link or magnet.', retriable=False)
-
-    if is_magnet(url):
-        try:
-            return _resolve_magnet(url, format_id)
-        except Exception as exc:
-            raise _classify_resolve_error(exc, url) from exc
+        raise ResolveError('No URL provided', code='invalid_url', hint='Paste a link.', retriable=False)
 
     if _is_stremio_resolver(url):
         try:
@@ -1654,11 +1603,9 @@ def resolve_url(url, format_id=None):
 
 
 def download_media(url, format_id=None, on_progress=None):
-    from torrent import is_magnet, normalize_url
+    from torrent import normalize_url
 
-    url = normalize_url(url)
-    if is_magnet(url):
-        raise RuntimeError('Magnet downloads are not supported. Play the torrent instead.')
+    url = _simple_normalize(url)
 
     outtmpl = str(DOWNLOADS / '%(title).200B [%(id)s].%(ext)s')
 

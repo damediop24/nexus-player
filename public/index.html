@@ -24,7 +24,7 @@
         <span class="brand-text">Nexus</span>
       </div>
       <div class="search-bar">
-        <input id="url-input" type="url" inputmode="url" placeholder="Paste URL or magnet link…" spellcheck="false" autocomplete="off" />
+        <input id="url-input" type="url" inputmode="url" placeholder="Paste URL or link…" spellcheck="false" autocomplete="off" />
         <button id="play-btn" class="btn-primary" type="button">Play</button>
         <button id="focus-btn" class="icon-btn focus-toggle" type="button" title="Focus on video" aria-label="Focus on video" aria-pressed="false">
           <svg class="ico-focus-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h4V5H3v6h2V7zm10 0v4h2V5h-6v2h4zM7 17v-4H5v6h6v-2H7zm10 0h-4v2h6v-6h-2v4z" fill="currentColor"/></svg>
@@ -59,7 +59,7 @@
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l4-4m-4 4L8 11M4 21h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
                 </div>
                 <p>Drop a link or file to play</p>
-                <span class="hint">YouTube · torrents · AllDebrid · 1800+ sites</span>
+                <span class="hint">YouTube · AllDebrid · 1800+ sites</span>
               </div>
             </div>
           </div>
@@ -160,7 +160,6 @@
           <button class="tab" data-tab="playlists" type="button">Lists</button>
           <button class="tab" data-tab="downloads" type="button">Files</button>
           <button class="tab" data-tab="library" type="button">Sync</button>
-          <button class="tab" data-tab="torrent" type="button">Torrent</button>
           <button class="tab" data-tab="torrents" type="button">Cloud</button>
         </nav>
 
@@ -195,18 +194,6 @@
           </div>
           <ul class="item-list" id="library-list"></ul>
         </div>
-        <div class="tab-panel" id="panel-torrent">
-          <div class="torrent-summary" id="torrent-summary">
-            <span class="torrent-summary-stat" id="torrent-summary-count">0 active</span>
-            <span class="torrent-summary-stat playing hidden" id="torrent-summary-playing">▶ Playing</span>
-          </div>
-          <div class="panel-actions">
-            <button class="chip-btn" id="torrent-paste-btn" type="button">Magnet</button>
-            <label class="chip-btn ghost torrent-file-btn">Torrent<input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden /></label>
-            <button class="chip-btn ghost" id="refresh-torrents-btn" type="button">Refresh</button>
-          </div>
-          <ul class="torrent-list" id="torrent-list"></ul>
-        </div>
         <div class="tab-panel" id="panel-torrents">
           <div class="settings-card" id="alldebrid-box">
             <h3>AllDebrid</h3>
@@ -233,7 +220,7 @@
   <button id="shuffle-btn" type="button" hidden></button>
   <button id="screenshot-btn" type="button" hidden></button>
 
-  <button id="torrent-add-btn" type="button" hidden></button>
+
   <button id="resolve-btn" type="button" hidden></button>
   <button id="mobile-fs-btn" type="button" hidden></button>
   <button id="mobile-pip-btn" type="button" hidden></button>
@@ -275,7 +262,7 @@
           <button type="button" class="action-tile" data-trigger="download-btn">Download</button>
 
           <button type="button" class="action-tile" data-trigger="resolve-btn">Inspect</button>
-          <button type="button" class="action-tile" data-trigger="torrent-add-btn">Magnet</button>
+
           <button type="button" class="action-tile" data-trigger="screenshot-btn">Screenshot</button>
           <button type="button" class="action-tile" data-trigger="ab-btn">A‑B loop</button>
         </div>
@@ -303,16 +290,7 @@
     </form>
   </dialog>
 
-  <dialog id="torrent-dialog" class="sheet-dialog">
-    <form method="dialog">
-      <header class="sheet-head"><h3>Add magnet</h3></header>
-      <textarea id="magnet-text" rows="4" placeholder="magnet:?xt=urn:btih:…"></textarea>
-      <div class="sheet-foot">
-        <button value="cancel" class="chip-btn ghost" type="submit">Cancel</button>
-        <button id="magnet-submit" value="ok" class="btn-primary" type="submit">Add &amp; play</button>
-      </div>
-    </form>
-  </dialog>
+
 
 
 

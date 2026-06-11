@@ -6,7 +6,7 @@ aiofiles==24.1.0
 python-multipart==0.0.20
 websockets==14.1
 curl_cffi>=0.7.0
-libtorrent==2.0.13
+
 
 # Telegram restricted-content downloader bot (neex)
 # kurigram is a maintained Pyrogram fork. TgCrypto is optional (speeds up crypto; requires MSVC++ Build Tools on Windows).

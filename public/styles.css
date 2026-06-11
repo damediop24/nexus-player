@@ -789,12 +789,7 @@ button, input, select, textarea {
 
 .status-pill.ok { color: var(--success); }
 
-#panel-torrent {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-}
+
 
 .torrent-summary {
   display: flex;

@@ -28,8 +28,7 @@ from resolver import (
 )
 from hls_proxy import is_hls_manifest, is_hls_segment_url, refresh_hls_segment, rewrite_hls_manifest
 from streams import create_token, get_token
-from torrent import HAS_LIBTORRENT, get_manager, is_magnet, is_torrent_bytes, normalize_url, parse_range_header
-from alldebrid import get_status as alldebrid_status, is_configured as alldebrid_ready, list_tasks as alldebrid_list_tasks, resolve_magnet as resolve_via_alldebrid, resolve_torrent_bytes as resolve_torrent_via_alldebrid
+from alldebrid import get_status as alldebrid_status, is_configured as alldebrid_ready, list_tasks as alldebrid_list_tasks, resolve_magnet as resolve_via_alldebrid
 
 ROOT = Path(__file__).parent.parent
 PUBLIC = ROOT / 'public'
@@ -240,7 +239,7 @@ def status():
         'name': 'Nexus Player',
         'version': '2.6.5',
         'cookies_file': bool(__import__('resolver')._cookies_file_path()),
-        'torrent_available': HAS_LIBTORRENT,
+
         'alldebrid': alldebrid_status(),
         'lan_ip': _lan_ip(),
         'port': int(os.environ.get('PORT', 8899)),
@@ -763,17 +762,7 @@ def _absolute_url(request: Request, path: str) -> str:
 
 
 
-class TorrentAddRequest(BaseModel):
-    magnet: Optional[str] = None
 
-
-class TorrentPlayRequest(BaseModel):
-    file_index: Optional[int] = None
-
-
-class TorrentPriorityRequest(BaseModel):
-    file_index: int
-    priority: int = 7
 
 
 @app.get('/api/alldebrid/status')
@@ -791,237 +780,10 @@ def api_alldebrid_tasks(limit: int = 50):
         raise HTTPException(400, f'AllDebrid tasks: {e}')
 
 
-@app.get('/api/torrent')
-def api_torrent_list():
-    if not HAS_LIBTORRENT:
-        return []
-    return get_manager().list_all()
-
-
-@app.post('/api/torrent/add')
-async def api_torrent_add(magnet: Optional[str] = Form(None), file: UploadFile = File(None)):
-    if magnet:
-        magnet = normalize_url(magnet)
-
-    if magnet and is_magnet(magnet):
-        if alldebrid_ready():
-            try:
-                info = resolve_via_alldebrid(magnet, 'Magnet link')
-                play = _make_play_response(info, magnet)
-                return {'type': 'alldebrid', 'alldebrid': True, 'files': [], **play}
-            except Exception as e:
-                if not HAS_LIBTORRENT:
-                    raise HTTPException(400, f'AllDebrid failed: {e}')
-        if not HAS_LIBTORRENT:
-            raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
-        mgr = get_manager()
-        tid = mgr.add_magnet(magnet)
-        mgr.wait_metadata(tid)
-        return {'id': tid, **mgr.status(tid), 'files': mgr.list_files(tid)}
-
-    if file and file.filename:
-        data = await file.read()
-        if is_torrent_bytes(data) or (file.filename or '').lower().endswith('.torrent'):
-            if alldebrid_ready():
-                try:
-                    info = resolve_torrent_via_alldebrid(data, file.filename)
-                    play = _make_play_response(info, info.get('url') or file.filename)
-                    return {'type': 'alldebrid', 'alldebrid': True, 'filename': file.filename, 'files': [], **play}
-                except Exception as e:
-                    if not HAS_LIBTORRENT:
-                        raise HTTPException(400, f'AllDebrid failed: {e}')
-            if not HAS_LIBTORRENT:
-                raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
-            mgr = get_manager()
-            tid = mgr.add_torrent_data(data, file.filename)
-            mgr.wait_metadata(tid)
-            return {'id': tid, **mgr.status(tid), 'files': mgr.list_files(tid)}
-
-    if not HAS_LIBTORRENT:
-        raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
-
-    raise HTTPException(400, 'Provide a magnet link or .torrent file')
-
-
-@app.get('/api/torrent/{tid}')
-def api_torrent_status(tid: str):
-    if not HAS_LIBTORRENT:
-        raise HTTPException(400, 'Torrent support not available')
-    try:
-        return get_manager().status(tid)
-    except KeyError:
-        raise HTTPException(404, 'Torrent not found')
-
-
-@app.get('/api/torrent/{tid}/files')
-def api_torrent_files(tid: str):
-    if not HAS_LIBTORRENT:
-        raise HTTPException(400, 'Torrent support not available')
-    try:
-        return get_manager().list_files(tid)
-    except KeyError:
-        raise HTTPException(404, 'Torrent not found')
-
-
-@app.post('/api/torrent/{tid}/play')
-def api_torrent_play(tid: str, req: TorrentPlayRequest):
-    if not HAS_LIBTORRENT:
-        raise HTTPException(400, 'Torrent support not available')
-    try:
-        mgr = get_manager()
-        entry = mgr.get(tid)
-        if not entry:
-            raise KeyError(tid)
-        source = entry.get('source', f'torrent:{tid}')
-        idx = req.file_index if req.file_index is not None else mgr.pick_best_video(tid)
-        mgr.prioritize_file(tid, idx)
-        files = mgr.list_files(tid)
-        file_info = next(f for f in files if f['index'] == idx)
-        info = {
-            'type': 'video',
-            'title': f"{mgr.status(tid)['name']} — {file_info['name']}",
-            'site': 'torrent',
-            'torrent_id': tid,
-            'file_index': idx,
-            'stream_url': f'/api/torrent/{tid}/stream/{idx}',
-            'stream_type': 'progressive',
-            'content_type': mgr.mime_for_file(tid, idx),
-            'formats': [{
-                'format_id': str(f['index']),
-                'ext': f['ext'],
-                'quality': f['name'],
-                'resolution': 'source',
-                'filesize': f['size'],
-            } for f in files if f['is_video']],
-            'best_format_id': str(idx),
-            'subtitles': [],
-            'headers': {},
-            'play_url': f'/api/torrent/{tid}/stream/{idx}',
-        }
-        return _make_play_response(info, source)
-    except KeyError:
-        raise HTTPException(404, 'Torrent not found')
-    except Exception as e:
-        raise HTTPException(400, str(e))
-
-
-@app.post('/api/torrent/{tid}/pause')
-def api_torrent_pause(tid: str):
-    get_manager().pause(tid)
-    return {'ok': True}
-
-
-@app.post('/api/torrent/{tid}/resume')
-def api_torrent_resume(tid: str):
-    get_manager().resume(tid)
-    return {'ok': True}
-
-
-@app.delete('/api/torrent/{tid}')
-def api_torrent_remove(tid: str, delete_files: bool = False):
-    get_manager().remove(tid, delete_files=delete_files)
-    return {'ok': True}
-
-
-@app.post('/api/torrent/{tid}/priority')
-def api_torrent_priority(tid: str, req: TorrentPriorityRequest):
-    get_manager().set_file_priority(tid, req.file_index, req.priority)
-    return {'ok': True}
-
-
-@app.get('/api/torrent/{tid}/stream/{file_index}')
-@app.head('/api/torrent/{tid}/stream/{file_index}')
-async def api_torrent_stream(tid: str, file_index: int, request: Request):
-    if not HAS_LIBTORRENT:
-        raise HTTPException(400, 'Torrent support not available')
-
-    mgr = get_manager()
-    try:
-        files = mgr.list_files(tid)
-        file_info = next(f for f in files if f['index'] == file_index)
-        size = file_info['size']
-    except (KeyError, StopIteration):
-        raise HTTPException(404, 'Torrent file not found')
-
-    range_header = request.headers.get('range')
-    start, end = parse_range_header(range_header, size)
-    length = end - start + 1
-
-    # Start playing at 3% downloaded for magnets/torrents.
-    # Do not wait for the full file (or large initial range) before serving.
-    # This allows playback to begin early while the rest downloads in background (sequential mode).
-    if start == 0 and (range_header is None or end >= size * 0.9):
-        buffer_end = min(size - 1, int(size * 0.03))
-        if end > buffer_end:
-            end = buffer_end
-            length = end - start + 1
-
-    loop = asyncio.get_event_loop()
-    ready = await loop.run_in_executor(None, mgr.ensure_range, tid, file_index, start, end)
-    if not ready:
-        raise HTTPException(503, 'Torrent buffering — try again in a few seconds')
-
-    path = mgr.file_path(tid, file_index)
-    if not path.exists():
-        raise HTTPException(503, 'Torrent file not on disk yet')
-
-    media_type = mgr.mime_for_file(tid, file_index)
-    headers = {
-        'Accept-Ranges': 'bytes',
-        'Content-Length': str(length),
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': media_type,
-    }
-    status_code = 200
-    if range_header:
-        status_code = 206
-        headers['Content-Range'] = f'bytes {start}-{end}/{size}'
-
-    if request.method == 'HEAD':
-        from starlette.responses import Response
-        return Response(status_code=status_code, headers=headers)
-
-    def iter_file():
-        with open(path, 'rb') as fh:
-            fh.seek(start)
-            remaining = length
-            while remaining > 0:
-                chunk = fh.read(min(65536, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
-
-    return StreamingResponse(iter_file(), status_code=status_code, media_type=media_type, headers=headers)
-
-
 @app.post('/api/upload')
 async def upload_file(file: UploadFile = File(...)):
     raw = await file.read()
     filename = file.filename or 'upload'
-
-    if filename.lower().endswith('.torrent') or is_torrent_bytes(raw):
-        if alldebrid_ready():
-            try:
-                info = resolve_torrent_via_alldebrid(raw, filename)
-                play = _make_play_response(info, info.get('url') or filename)
-                return {'type': 'alldebrid', 'filename': filename, **play}
-            except Exception as e:
-                if not HAS_LIBTORRENT:
-                    raise HTTPException(400, f'AllDebrid failed: {e}')
-        if HAS_LIBTORRENT:
-            mgr = get_manager()
-            info = mgr.resolve_torrent_file(raw, filename)
-            return {
-                'type': 'torrent',
-                'torrent_id': info['torrent_id'],
-                'filename': filename,
-                'title': info['title'],
-                'play_url': info['play_url'],
-                'files': mgr.list_files(info['torrent_id']),
-                **info,
-            }
-        raise HTTPException(400, 'Torrent support requires AllDebrid or libtorrent')
 
     ext = Path(filename).suffix or '.mp4'
     fid = uuid.uuid4().hex

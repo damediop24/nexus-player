@@ -13,7 +13,7 @@ from resolver import resolve_url
 TESTS = [
     ('xvideos', 'https://www.xvideos.com/video.ooffkpk6f79/48480754/0/my_huge_tits_own_my_stepsons_-_stepmom_fucks_them_my_way_or_no_way_-_vibewithmommy'),
     ('youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'),
-    ('magnet', 'magnet:?xt=urn:btih:842783e3005495d5d1637f5364b59343c7844707&dn=ubuntu-18.04.2-live-server-amd64.iso'),
+
 ]
 
 

@@ -82,9 +82,11 @@ def _api_request(method: str, path: str, *, params=None, data=None, files=None, 
 
 
 def _normalize_magnet(source: str) -> str:
-    from torrent import normalize_url
-
-    magnet = normalize_url(source)
+    from urllib.parse import unquote
+    u = unquote((source or '').strip().lstrip('\ufeff'))
+    if len(u) >= 2 and u[0] == u[-1] and u[0] in '"\'':
+        u = u[1:-1].strip()
+    magnet = u
     if not magnet.lower().startswith('magnet:'):
         magnet = f'magnet:?xt=urn:btih:{magnet}'
     return magnet

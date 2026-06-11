@@ -9,11 +9,11 @@ const favoritesList = $('#favorites-list');
 const downloadsList = $('#downloads-list');
 const libraryList = $('#library-list');
 const playlistsContainer = $('#playlists-container');
-const torrentList = $('#torrent-list');
+
 const cloudStatus = $('#cloud-status');
 const cloudStatusText = $('#cloud-status-text');
 const cloudProgressBar = $('#cloud-progress-bar');
-let torrentPollTimer = null;
+
 let cloudPollActive = false;
 let appStatus = null;
 const qualitySelect = $('#quality-select');
@@ -144,9 +144,7 @@ function fmtSpeed(bps) {
   return bps + ' B/s';
 }
 
-function isMagnet(url) {
-  return /^magnet:\?/i.test((url || '').trim());
-}
+
 
 function getDuration() {
   if (isFinite(video.duration) && video.duration > 0) return video.duration;
@@ -690,13 +688,7 @@ function loadSource(url, type = 'progressive') {
   }
 }
 
-function isAlldebridMedia(info) {
-  if (!info) return false;
-  return info.site === 'alldebrid'
-    || info.resolved_with === 'alldebrid-cloud'
-    || info.alldebrid_magnet_id
-    || (info.source_url && isMagnet(info.source_url) && appStatus?.alldebrid?.configured);
-}
+
 
 function formatAlldebridPhase(phase) {
   const labels = {
@@ -708,82 +700,13 @@ function formatAlldebridPhase(phase) {
   return labels[phase] || phase || 'Cloud';
 }
 
-function formatTorrentState(state) {
-  const labels = {
-    downloading: 'Downloading',
-    seeding: 'Seeding',
-    finished: 'Complete',
-    checking_files: 'Checking files',
-    checking_resume_data: 'Checking resume',
-    allocating: 'Allocating',
-    queued_for_checking: 'Queued',
-    downloading_metadata: 'Fetching metadata',
-  };
-  return labels[state] || (state || 'Active').replace(/_/g, ' ');
-}
 
-function torrentBadgeClass(kind) {
-  const map = {
-    seeding: 'seeding',
-    finished: 'seeding',
-    downloading: 'downloading',
-    downloading_metadata: 'buffering',
-    checking_files: 'buffering',
-    checking_resume_data: 'buffering',
-    complete: 'ready',
-    running: 'downloading',
-    pending: 'queued',
-    error: 'error',
-    playing: 'playing',
-  };
-  return map[kind] || 'queued';
-}
 
-function isTorrentCurrentlyPlaying(item) {
-  if (!currentMedia || !item) return false;
-  if (item.type === 'local' && currentMedia.torrent_id === item.id) {
-    if (currentMedia.file_index == null || item.file_index == null) return true;
-    return String(currentMedia.file_index) === String(item.file_index);
-  }
-  if (item.type === 'cloud') {
-    if (currentMedia.alldebrid_magnet_id && item.magnet_id === currentMedia.alldebrid_magnet_id) return true;
-    if (currentMedia.source_url && item.source && currentMedia.source_url.trim() === item.source.trim()) return true;
-    if (isAlldebridMedia(currentMedia) && item.source && isMagnet(currentMedia.source_url) && item.source === currentMedia.source_url) return true;
-  }
-  return false;
-}
 
-function updateTorrentSummary(localCount, cloudCount) {
-  const countEl = $('#torrent-summary-count');
-  const playingEl = $('#torrent-summary-playing');
-  const total = localCount + cloudCount;
-  if (countEl) {
-    const parts = [];
-    if (localCount) parts.push(`${localCount} local`);
-    if (cloudCount) parts.push(`${cloudCount} cloud`);
-    countEl.textContent = total ? parts.join(' · ') : 'No active torrents';
-  }
-  const playing = currentMedia && (
-    currentMedia.torrent_id
-    || isAlldebridMedia(currentMedia)
-    || (currentMedia.source_url && isMagnet(currentMedia.source_url))
-  );
-  if (playingEl) {
-    playingEl.classList.toggle('hidden', !playing);
-    if (playing && currentMedia?.title) {
-      playingEl.textContent = `▶ ${currentMedia.title.length > 28 ? `${currentMedia.title.slice(0, 28)}…` : currentMedia.title}`;
-    } else if (playing) {
-      playingEl.textContent = '▶ Playing';
-    }
-  }
-}
 
 function findMatchingAlldebridTask(tasks, info) {
   if (!tasks?.length || !info) return null;
-  if (info.alldebrid_magnet_id) {
-    const byMagnet = tasks.find((t) => t.magnet_id === info.alldebrid_magnet_id || t.id === info.alldebrid_magnet_id);
-    if (byMagnet) return byMagnet;
-  }
+  
   if (info.task_id) {
     const byTask = tasks.find((t) => t.task_id === info.task_id || t.id === info.task_id);
     if (byTask) return byTask;
@@ -1061,210 +984,19 @@ async function playResolved(info) {
   cloudPollActive = isAlldebridMedia(info);
 }
 
-async function playTorrent(tid, fileIndex = null) {
-  toast('Starting torrent stream...', 5000);
-  const body = fileIndex != null ? { file_index: fileIndex } : {};
-  const info = await api(`/api/torrent/${tid}/play`, { method: 'POST', body: JSON.stringify(body) });
-  currentMedia = info;
-  overlay.classList.add('hidden');
-  setMeta(info);
-  populateFormats(info.formats || [], info.best_format_id);
-  populateSubtitles(info.subtitles || []);
-  loadSource(info.play_url, info.stream_type);
-  toast('Playing torrent: ' + (info.title || 'media'));
-  if ($('#panel-torrent')?.classList.contains('active')) refreshTorrents();
-}
 
-async function addMagnet(magnet, autoplay = true) {
-  const fd = new FormData();
-  fd.append('magnet', magnet.trim());
-  toast('Adding torrent...', 5000);
-  const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
-    if (!r.ok) return r.json().then((d) => rejectApiResponse(r, d, 'Add failed'));
-    return r.json();
-  });
-  await refreshTorrents();
-  toast('Torrent added: ' + (res.name || 'magnet'));
-  if (autoplay) {
-    if ((res.type === 'alldebrid' || res.alldebrid) && res.play_url) {
-      await playResolved(res);
-    } else if (res.type === 'alldebrid' || res.alldebrid) {
-      await playUrl(magnet);
-    } else {
-      const videoFile = (res.files || []).find((f) => f.is_video);
-      if (videoFile) await playTorrent(res.id, videoFile.index);
-    }
-  }
-  return res;
-}
 
-function renderLocalTorrentCard(t) {
-  const item = { type: 'local', id: t.id, file_index: currentMedia?.torrent_id === t.id ? currentMedia.file_index : null };
-  const playing = isTorrentCurrentlyPlaying(item);
-  const stateLabel = formatTorrentState(t.state);
-  const badgeKind = playing ? 'playing' : (t.state || 'downloading');
-  const card = document.createElement('li');
-  card.className = 'torrent-card' + (playing ? ' playing' : '');
-  card.innerHTML = `
-    <div class="torrent-card-header">
-      <div>
-        <div class="torrent-name">${esc(t.name || 'Torrent')}</div>
-        <div class="torrent-status-row">
-          <span class="torrent-badge ${torrentBadgeClass(badgeKind)}">${playing ? 'Playing' : stateLabel}</span>
-          <span class="torrent-badge">${Math.round(t.progress || 0)}%</span>
-          ${t.paused ? '<span class="torrent-badge queued">Paused</span>' : ''}
-        </div>
-      </div>
-      <div class="torrent-actions">
-        <button type="button" data-act="play" title="Play best video">▶</button>
-        <button type="button" data-act="${t.paused ? 'resume' : 'pause'}">${t.paused ? '▶' : '⏸'}</button>
-        <button type="button" data-act="remove" title="Remove">✕</button>
-      </div>
-    </div>
-    <div class="torrent-progress" title="${t.progress || 0}%"><div class="torrent-progress-bar" style="width:${t.progress || 0}%"></div></div>
-    <div class="torrent-stats">
-      <span>Peers <strong>${t.peers || 0}</strong></span>
-      <span>Seeds <strong>${t.seeds || 0}</strong></span>
-      <span>Down <strong>${fmtSpeed(t.download_rate)}</strong></span>
-      <span>Up <strong>${fmtSpeed(t.upload_rate)}</strong></span>
-    </div>
-    <div class="torrent-files" data-files="${t.id}">Loading files...</div>
-  `;
 
-  card.querySelectorAll('.torrent-actions button').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const act = btn.dataset.act;
-      if (act === 'play') {
-        try { await playTorrent(t.id); } catch (err) { toast(err.message, 5000); }
-      } else if (act === 'pause') {
-        await api(`/api/torrent/${t.id}/pause`, { method: 'POST' });
-        refreshTorrents();
-      } else if (act === 'resume') {
-        await api(`/api/torrent/${t.id}/resume`, { method: 'POST' });
-        refreshTorrents();
-      } else if (act === 'remove') {
-        await api(`/api/torrent/${t.id}?delete_files=false`, { method: 'DELETE' });
-        refreshTorrents();
-      }
-    });
-  });
 
-  torrentList.appendChild(card);
-  loadTorrentFiles(t.id, card.querySelector(`[data-files="${t.id}"]`));
-}
 
-function renderAlldebridTaskCard(t) {
-  const item = { type: 'cloud', id: t.id, magnet_id: t.magnet_id, source: t.source };
-  const playing = isTorrentCurrentlyPlaying(item);
-  const phase = formatAlldebridPhase(t.phase || t.state);
-  const size = t.file_size ? fmtSize(t.file_size) : '';
-  const canPlay = (t.phase === 'complete' || t.progress >= 100) && t.source;
-  const badgeKind = playing ? 'playing' : (t.phase || t.state || 'running');
-  const card = document.createElement('li');
-  card.className = 'torrent-card cloud' + (playing ? ' playing' : '');
-  card.innerHTML = `
-    <div class="torrent-card-header">
-      <div>
-        <div class="torrent-name">${esc(t.name || 'AllDebrid download')}</div>
-        <div class="torrent-status-row">
-          <span class="torrent-badge ${torrentBadgeClass(badgeKind)}">${playing ? 'Playing' : phase}</span>
-          <span class="torrent-badge">${Math.round(t.progress || 0)}%</span>
-          <span class="torrent-badge">AllDebrid</span>
-        </div>
-      </div>
-      <div class="torrent-actions">
-        ${canPlay ? '<button type="button" data-act="play" title="Play from cloud">▶</button>' : ''}
-      </div>
-    </div>
-    <div class="torrent-progress" title="${t.progress || 0}%"><div class="torrent-progress-bar" style="width:${t.progress || 0}%"></div></div>
-    <div class="torrent-stats">
-      <span>Size <strong>${size || '—'}</strong></span>
-      <span>Status <strong>${esc((t.status_code === 4 || t.phase === 'complete') ? 'Ready' : 'Cloud')}</strong></span>
-      ${t.hash ? `<span>Hash <strong>${esc(String(t.hash).slice(0, 8))}…</strong></span>` : '<span>Source <strong>Magnet</strong></span>'}
-      <span>Play <strong>${canPlay ? 'Ready' : 'Waiting'}</strong></span>
-    </div>
-    ${t.error ? `<div class="torrent-meta" style="margin-top:0.35rem;color:var(--danger,#e55)">${esc(t.error)}</div>` : ''}
-  `;
 
-  const playBtn = card.querySelector('[data-act="play"]');
-  if (playBtn) {
-    playBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      try { await playUrl(t.source); } catch (err) { toast(err.message, 5000); }
-    });
-  }
 
-  torrentList.appendChild(card);
-}
 
-async function refreshTorrents() {
-  const localAvailable = appStatus?.torrent_available;
-  const alldebridAvailable = appStatus?.alldebrid?.configured;
-  if (!torrentList) return;
-  torrentList.innerHTML = '';
 
-  if (!localAvailable && !alldebridAvailable) {
-    torrentList.innerHTML = '<li class="item"><div class="item-sub">AllDebrid is unavailable and local libtorrent is not enabled</div></li>';
-    updateTorrentSummary(0, 0);
-    return;
-  }
 
-  const [localItems, cloudItems] = await Promise.all([
-    localAvailable ? api('/api/torrent').catch(() => []) : Promise.resolve([]),
-    alldebridAvailable ? api('/api/alldebrid/tasks').catch(() => []) : Promise.resolve([]),
-  ]);
 
-  updateTorrentSummary(localItems.length, cloudItems.length);
 
-  if (!localItems.length && !cloudItems.length) {
-    torrentList.innerHTML = '<li class="item"><div class="item-sub">No active torrents — paste a magnet or drop a .torrent file</div></li>';
-    return;
-  }
-
-  cloudItems.forEach(renderAlldebridTaskCard);
-  localItems.forEach(renderLocalTorrentCard);
-}
-
-async function loadTorrentFiles(tid, container) {
-  try {
-    const files = await api(`/api/torrent/${tid}/files`);
-    container.innerHTML = '';
-    files.forEach((f) => {
-      const row = document.createElement('div');
-      const isPlayingFile = currentMedia?.torrent_id === tid && String(currentMedia.file_index) === String(f.index);
-      row.className = 'torrent-file' + (f.is_video ? ' playable' : '') + (isPlayingFile ? ' playing' : '');
-      const pct = Math.round(f.progress || 0);
-      const playMark = isPlayingFile ? ' ▶' : '';
-      row.innerHTML = `<span>${esc(f.name)} · ${pct}%${playMark}</span><span class="torrent-file-size">${fmtSize(f.size)}</span>`;
-      if (f.is_video) {
-        row.addEventListener('click', async () => {
-          try { await playTorrent(tid, f.index); refreshTorrents(); } catch (e) { toast(e.message, 5000); }
-        });
-      }
-      container.appendChild(row);
-    });
-  } catch (_) {
-    container.textContent = 'Files unavailable';
-  }
-}
-
-async function initAlldebrid() {
-  try {
-    const st = appStatus?.alldebrid || await api('/api/alldebrid/status');
-    const el = $('#alldebrid-status');
-    if (!el) return;
-    if (st.configured) {
-      const premium = st.is_premium ? 'premium' : 'free';
-      el.textContent = `Connected as ${st.username || 'AllDebrid'} (${premium}) — magnets use cloud`;
-      el.classList.add('ok');
-    } else if (st.error) {
-      el.textContent = `AllDebrid error: ${st.error}`;
-    } else {
-      el.textContent = 'AllDebrid not configured';
-    }
-  } catch (_) {}
-}
+async 
 
 function shouldPollCloudStatus() {
   return appStatus?.alldebrid?.configured && (
@@ -1273,17 +1005,9 @@ function shouldPollCloudStatus() {
   );
 }
 
-function isTorrentPanelActive() {
-  return $('#panel-torrent')?.classList.contains('active') || $('#panel-torrents')?.classList.contains('active');
-}
 
-function startTorrentPolling() {
-  clearInterval(torrentPollTimer);
-  torrentPollTimer = setInterval(() => {
-    if ($('#panel-torrent')?.classList.contains('active')) refreshTorrents();
-    else if (shouldPollCloudStatus()) updateCloudStatus();
-  }, 2500);
-}
+
+
 
 function isBlockedSiteError(msg) {
   return /403|forbidden|blocked this server|cloud servers|sign in|confirm your age|bot|captcha|unable to extract/i.test(msg || '');
@@ -1342,10 +1066,7 @@ function applyPlayback(info, resumePos = 0) {
   toast('Playing: ' + (info.title || 'media'));
   wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
   if (isAlldebridMedia(info)) updateCloudStatus();
-  if (info.torrent_id || isAlldebridMedia(info) || (info.source_url && isMagnet(info.source_url))) {
-    if ($('#panel-torrent')?.classList.contains('active')) refreshTorrents();
-    else updateTorrentSummary(0, 0);
-  }
+  
 }
 
 
@@ -1354,16 +1075,7 @@ async function playUrl(url, formatId = null, resumePos = 0) {
   if (!url) return;
   if (formatId == null) qualitySelect.value = '';
   wantsPlayback = true;
-  const alldebridMagnet = isMagnet(url) && appStatus?.alldebrid?.configured;
-  if (alldebridMagnet) {
-    toast('Sending to AllDebrid cloud...', 8000);
-    cloudPollActive = true;
-    updateCloudStatus();
-  } else if (isMagnet(url)) {
-    toast('Starting torrent — fetching metadata...', 8000);
-  } else {
-    toast('Resolving stream...');
-  }
+  toast('Resolving stream...');
   urlInput.value = url;
 
   try {
@@ -1567,15 +1279,12 @@ async function initStatus() {
   $('#remote-url').textContent = remote + ' (tap to copy)';
   $('#remote-url').onclick = () => { navigator.clipboard.writeText(remote); toast('Remote URL copied'); };
 
-  if (!st.torrent_available && !st.alldebrid?.configured) {
-    $('#torrent-add-btn').style.opacity = '0.4';
-  } else {
-    $('#torrent-add-btn').style.opacity = '1';
+   else {
+
   }
   await initAlldebrid();
 
   await syncLibrary();
-  startTorrentPolling();
   refreshHistory();
   refreshFavorites();
 }
@@ -1689,37 +1398,7 @@ $('#play-prompt')?.addEventListener('click', (e) => {
 });
 $('#focus-btn')?.addEventListener('click', toggleVideoFocus);
 $('#focus-exit-btn')?.addEventListener('click', toggleVideoFocus);
-$('#torrent-add-btn').addEventListener('click', () => {
-  const v = urlInput.value.trim();
-  if (isMagnet(v)) addMagnet(v);
-  else $('#torrent-dialog').showModal();
-});
-$('#torrent-paste-btn').addEventListener('click', () => $('#torrent-dialog').showModal());
-$('#torrent-dialog').addEventListener('close', async () => {
-  if ($('#torrent-dialog').returnValue !== 'ok') return;
-  const magnet = $('#magnet-text').value.trim();
-  if (!isMagnet(magnet)) { toast('Invalid magnet link'); return; }
-  try { await addMagnet(magnet); } catch (e) { toast(e.message, 5000); }
-});
-$('#torrent-file-input').addEventListener('change', async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  toast('Adding torrent file...', 5000);
-  try {
-    const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
-      if (!r.ok) return r.json().then((d) => rejectApiResponse(r, d, 'Failed'));
-      return r.json();
-    });
-    await refreshTorrents();
-    const videoFile = (res.files || []).find((f) => f.is_video);
-    if (videoFile) await playTorrent(res.id, videoFile.index);
-    else toast('Torrent added — pick a file to play');
-  } catch (err) { toast(err.message, 5000); }
-  e.target.value = '';
-});
-$('#refresh-torrents-btn').addEventListener('click', refreshTorrents);
+
 $('#resolve-btn').addEventListener('click', async () => {
   const url = urlInput.value.trim();
   if (!url) return;
@@ -2259,8 +1938,7 @@ $$('.tab').forEach((tab) => {
     $$('.tab').forEach((t) => t.classList.toggle('active', t === tab));
     $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${tab.dataset.tab}`));
     if (tab.dataset.tab === 'library') refreshLibrary();
-    if (tab.dataset.tab === 'torrent') refreshTorrents();
-    if (tab.dataset.tab === 'torrents') { initAlldebrid(); }
+    
   });
 });
 
@@ -2279,28 +1957,20 @@ document.addEventListener('drop', async (e) => {
   if (file) {
     const fd = new FormData();
     fd.append('file', file);
-    if (file.name.toLowerCase().endsWith('.torrent')) {
-      toast('Adding torrent...', 5000);
-      try {
-        const res = await fetch('/api/torrent/add', { method: 'POST', body: fd }).then((r) => {
+    ).then((r) => {
           if (!r.ok) return r.json().then((d) => rejectApiResponse(r, d, 'Failed'));
           return r.json();
         });
-        await refreshTorrents();
+        await 
         const videoFile = (res.files || []).find((f) => f.is_video);
-        if (videoFile) await playTorrent(res.id, videoFile.index);
-        else toast('Torrent added');
+        toast('Torrent support removed');
       } catch (err) { toast(err.message, 5000); }
       return;
     }
     toast('Uploading...');
     const res = await fetch('/api/upload', { method: 'POST', body: fd }).then((r) => r.json());
     if (res.play_url) {
-      if (res.play_url.startsWith('/api/torrent/') || res.type === 'torrent') {
-        const m = res.play_url.match(/\/api\/torrent\/([^/]+)\/stream\/(\d+)/);
-        if (m) await playTorrent(m[1], parseInt(m[2], 10));
-        else if (res.torrent_id) await playTorrent(res.torrent_id);
-      } else if (res.stream_url || res.type === 'alldebrid') {
+       else if (res.stream_url || res.type === 'alldebrid') {
         await playUrl(res.url || res.source_url || urlInput.value);
       } else {
         playLocal(res.play_url, res.title);
@@ -2315,10 +1985,7 @@ document.addEventListener('drop', async (e) => {
 document.addEventListener('paste', (e) => {
   if (e.target.matches('input, textarea')) return;
   const text = e.clipboardData.getData('text').trim();
-  if (/^magnet:\?/i.test(text)) {
-    urlInput.value = text;
-    playUrl(text);
-  } else if (/^https?:\/\//i.test(text)) {
+  if (/^https?:\/\//i.test(text)) {
     urlInput.value = text;
     playUrl(text);
   }
@@ -2383,4 +2050,3 @@ refreshHistory();
 refreshFavorites();
 refreshDownloads();
 refreshPlaylists();
-refreshTorrents();
