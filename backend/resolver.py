@@ -1141,6 +1141,20 @@ def _resolve_shemale6(url):
                 seen.add(v)
                 videos.append(v)
 
+    # Extra patterns for common tube site players (sources array, video object, hd, player config)
+    for pat in [
+        r'sources\s*:\s*\[\s*\{[^}]*["\']?(?:file|src|url)["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+        r'["\']?video["\']?\s*:\s*\{[^}]*["\']?url["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+        r'player\s*\(\s*\{[^}]*["\']?src["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+        r'["\']hd["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+        r'["\']?src["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8)[^"\']*)["\']',
+    ]:
+        for m in re.finditer(pat, html, re.I | re.S):
+            v = m.group(1)
+            if v not in seen:
+                seen.add(v)
+                videos.append(v)
+
     # Filter obvious previews/trailers
     videos = [v for v in videos if not any(x in v.lower() for x in ['preview', 'trailer', 'thumb', 'sample', 'teaser', 'short'])]
 
