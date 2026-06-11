@@ -947,6 +947,15 @@ async def api_torrent_stream(tid: str, file_index: int, request: Request):
     start, end = parse_range_header(range_header, size)
     length = end - start + 1
 
+    # Start playing at 3% downloaded for magnets/torrents.
+    # Do not wait for the full file (or large initial range) before serving.
+    # This allows playback to begin early while the rest downloads in background (sequential mode).
+    if start == 0 and (range_header is None or end >= size * 0.9):
+        buffer_end = min(size - 1, int(size * 0.03))
+        if end > buffer_end:
+            end = buffer_end
+            length = end - start + 1
+
     loop = asyncio.get_event_loop()
     ready = await loop.run_in_executor(None, mgr.ensure_range, tid, file_index, start, end)
     if not ready:

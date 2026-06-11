@@ -256,7 +256,13 @@ class TorrentManager:
         start_piece = ti.map_file(file_index, start, 0).piece
         end_piece = ti.map_file(file_index, end, 0).piece
 
-        for piece in range(start_piece, end_piece + 1):
+        # Start playback at 3% without waiting for the entire file.
+        # This allows streaming to begin early while downloading the rest sequentially.
+        buffer_end = min(end, int(size * 0.03))
+        buffer_end_piece = ti.map_file(file_index, buffer_end, 0).piece
+        wait_end_piece = max(end_piece, buffer_end_piece)  # ensure at least requested + buffer start
+
+        for piece in range(start_piece, wait_end_piece + 1):
             handle.piece_priority(piece, 7)
 
         deadline = time.time() + timeout
@@ -266,7 +272,7 @@ class TorrentManager:
                 return True
 
             ready = True
-            for piece in range(start_piece, end_piece + 1):
+            for piece in range(start_piece, wait_end_piece + 1):
                 if not handle.have_piece(piece):
                     ready = False
                     break
