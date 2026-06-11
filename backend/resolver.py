@@ -954,8 +954,8 @@ def _resolve_stremio_stream(url):
 def _is_direct_media(url):
     if _is_stremio_resolver(url):
         return False
-    lower = url.lower().split('?')[0]
-    return lower.endswith(_MEDIA_EXTENSIONS)
+    lower = url.lower().split('?')[0].rstrip('/')
+    return any(lower.endswith(ext) for ext in _MEDIA_EXTENSIONS)
 
 
 def _looks_like_cdn_download(url):
@@ -1126,6 +1126,9 @@ def _resolve_shemale6(url):
     seen = set()
     for match in _SHEMALE6_VIDEO_RE.findall(html):
         clean = match.rstrip('",\' ')
+        # Clean download query params; prefer bare .mp4/.m3u8 for streaming
+        if '?' in clean:
+            clean = clean.split('?')[0].rstrip('/')
         if clean not in seen and ('.mp4' in clean.lower() or '.m3u8' in clean.lower()):
             seen.add(clean)
             videos.append(clean)
@@ -1158,6 +1161,8 @@ def _resolve_shemale6(url):
         # very broad last resort: any http(s) url containing .mp4 or .m3u8 anywhere in the HTML (catches JS, attributes, text, etc. even if the site is JS-rendered or uses flashvars)
         for m in re.findall(r'https?://[^"\s\'<>]+?\.(?:mp4|m3u8)[^"\s\'<>]*', html, re.I):
             v = m.rstrip('",\' ')
+            if '?' in v:
+                v = v.split('?')[0].rstrip('/')
             if v not in seen:
                 seen.add(v)
                 videos.append(v)
@@ -1172,6 +1177,8 @@ def _resolve_shemale6(url):
     ]:
         for m in re.finditer(pat, html, re.I | re.S):
             v = m.group(1)
+            if '?' in v:
+                v = v.split('?')[0].rstrip('/')
             if v not in seen:
                 seen.add(v)
                 videos.append(v)
