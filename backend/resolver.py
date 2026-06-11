@@ -1062,6 +1062,7 @@ def _resolve_erome(url):
 def _resolve_shemale6(url):
     """Custom scraper for shemale6.com similar to erome.
     Extracts direct MP4 or HLS from page HTML (bypasses failing yt-dlp generic flashvars).
+    Uses curl_cffi impersonate when available for better success against anti-bot on cloud.
     """
     headers = {
         'User-Agent': BROWSER_UA,
@@ -1070,12 +1071,31 @@ def _resolve_shemale6(url):
         'Accept-Language': 'en-US,en;q=0.9',
     }
 
-    with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=30.0)) as client:
-        resp = client.get(url, headers=headers)
-        if resp.status_code in (403, 429):
-            raise RuntimeError('Shemale6 blocked this server (403/429)')
-        resp.raise_for_status()
-        html = resp.text
+    html = None
+    if HAS_CURL_CFFI:
+        try:
+            from curl_cffi import requests as curl_requests
+            resp = curl_requests.get(
+                url,
+                headers=headers,
+                impersonate="chrome110",
+                timeout=30,
+                allow_redirects=True,
+            )
+            if resp.status_code in (403, 429):
+                raise RuntimeError('Shemale6 blocked this server (403/429)')
+            resp.raise_for_status()
+            html = resp.text
+        except Exception:
+            html = None  # fall back to httpx
+
+    if html is None:
+        with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=30.0)) as client:
+            resp = client.get(url, headers=headers)
+            if resp.status_code in (403, 429):
+                raise RuntimeError('Shemale6 blocked this server (403/429)')
+            resp.raise_for_status()
+            html = resp.text
 
     title_match = re.search(r'<title>([^<]+)</title>', html, re.I)
     title = title_match.group(1).strip() if title_match else 'Shemale6'
