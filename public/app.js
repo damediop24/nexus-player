@@ -2016,7 +2016,19 @@ async function launchResolvedInMpv(absUrl, title, referer = '') {
   const bridgeUrl = buildMpvBridgeGetUrl(absUrl, title, referer);
   const useForm = bridgeUrl.length > 5500 || absUrl.length > 1800;
 
-  if (!useForm) {
+  // Check if bridge is actually running before trying to open the raw /launch URL
+  // (prevents opening a useless tab with the launch URL when bridge is not started)
+  let bridgeRunning = false;
+  try {
+    const health = await fetch(`http://127.0.0.1:${MPV_BRIDGE_PORT}/health`, {
+      signal: AbortSignal.timeout(1500)
+    });
+    bridgeRunning = health.ok;
+  } catch (_) {
+    bridgeRunning = false;
+  }
+
+  if (bridgeRunning && !useForm) {
     tryOpenUrl(bridgeUrl, 'nexusMpvBridge');
   } else {
     const page = new URL('/mpv-launch.html', window.location.origin);
@@ -2030,7 +2042,7 @@ async function launchResolvedInMpv(absUrl, title, referer = '') {
 
   showMpvLaunchDialog(absUrl, title);
   await copyText(absUrl);
-  toast('MPV launcher ready — click Launch MPV in the dialog if the player did not open.', 8000);
+  toast('MPV launcher ready — click Launch MPV in the dialog if the player did not open. Make sure start-mpv-bridge.vbs is running on this PC.', 8000);
 }
 
 async function openInMpv() {
@@ -2074,6 +2086,26 @@ async function openInMpv() {
   if (!absUrl) {
     toast('No stream URL available for MPV');
     return;
+  }
+
+  // For cloud-proxied streams (e.g. shemale6 on Railway), prefer re-resolving the original source
+  // via the local bridge so MPV gets a direct/full stream that local network can play reliably
+  // (cloud proxy may be limited or only have preview for some sites).
+  const isCloudProxy = absUrl.includes('/api/proxy/') && (currentMedia?.site === 'shemale6' || /shemale6|blocked|cloud/i.test(currentMedia?.source_url || ''));
+  if (isCloudProxy) {
+    try {
+      const source = currentMedia?.source_url || urlInput.value.trim();
+      if (source) {
+        const resolved = await resolveViaLocalBridge(source);
+        if (resolved && resolved.stream_url) {
+          absUrl = resolved.stream_url;
+          referer = resolved.headers?.Referer || referer;
+          title = resolved.title || title;
+        }
+      }
+    } catch (_) {
+      // fall back to the cloud proxy URL
+    }
   }
 
   await launchResolvedInMpv(absUrl, title, referer);
