@@ -1114,6 +1114,14 @@ def _resolve_shemale6(url):
                     videos.append(v)
 
     if not videos:
+        # very broad last resort: any http(s) url containing .mp4 or .m3u8 anywhere in the HTML (catches JS, attributes, text, etc. even if the site is JS-rendered or uses flashvars)
+        for m in re.findall(r'https?://[^"\s\'<>]+?\.(?:mp4|m3u8)[^"\s\'<>]*', html, re.I):
+            v = m.rstrip('",\' ')
+            if v not in seen:
+                seen.add(v)
+                videos.append(v)
+
+    if not videos:
         raise ResolveError(
             'No video source found on Shemale6 page',
             code='no_stream',
@@ -1391,6 +1399,15 @@ def resolve_url(url, format_id=None):
             return _resolve_stremio_stream(url)
         except Exception as exc:
             raise _classify_resolve_error(exc, url) from exc
+
+    if _is_shemale6_page_url(url):
+        try:
+            return _resolve_shemale6(url)
+        except ResolveError:
+            raise
+        except Exception as exc:
+            if not _is_retriable(exc):
+                raise _classify_resolve_error(exc, url) from exc
 
     if _is_direct_media(url):
         probe = _probe_direct_url(url) if _is_erome_host(url) else None
