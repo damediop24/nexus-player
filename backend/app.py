@@ -23,8 +23,6 @@ from resolver import (
     ResolveError,
     _ffmpeg_path,
     download_media,
-    find_mpv,
-    launch_mpv,
     normalize_play_url,
     resolve_url,
 )
@@ -246,9 +244,9 @@ def status():
         'alldebrid': alldebrid_status(),
         'lan_ip': _lan_ip(),
         'port': int(os.environ.get('PORT', 8899)),
-        'mpv_available': True,
-        'mpv_server': bool(find_mpv()),
-        'mpv_client': True,
+        'mpv_available': False,
+        'mpv_server': False,
+        'mpv_client': False,
         'ffmpeg_available': bool(_ffmpeg_path()),
         'queue_length': len(queue),
         'anti_bot': bool(__import__('resolver')._available_impersonate_targets()),
@@ -302,7 +300,7 @@ def api_play_local(req: LocalPlayRequest):
             raise HTTPException(400, {
                 'error': 'Missing stream URL from local bridge',
                 'code': 'invalid_local_play',
-                'hint': 'Start start-mpv-bridge.vbs on your PC and make sure it can resolve the link.',
+                'hint': 'Use a direct link or local player.',
                 'retriable': True,
             })
         info = {
@@ -762,32 +760,7 @@ def _absolute_url(request: Request, path: str) -> str:
     return base + path
 
 
-@app.post('/api/mpv')
-def api_mpv(req: PlayRequest, request: Request, server: bool = False):
-    try:
-        info = resolve_url(req.url, req.format_id)
-        play = _make_play_response(info, req.url)
-        play_url = _absolute_url(request, play['play_url'])
-        title = play.get('title') or req.title
 
-        if server and find_mpv():
-            port = int(os.environ.get('PORT', 8899))
-            local_url = play['play_url']
-            if local_url.startswith('/'):
-                local_url = f'http://127.0.0.1:{port}{local_url}'
-            launch_mpv(local_url, title, info.get('headers'))
-            return {'ok': True, 'mode': 'server', 'play_url': play_url, 'title': title}
-
-        return {
-            'ok': True,
-            'mode': 'client',
-            'play_url': play_url,
-            'title': title,
-            'mpv_protocol': f'mpv://{play_url}',
-            'command': f'mpv "{play_url}"',
-        }
-    except Exception as e:
-        raise HTTPException(400, str(e))
 
 
 class TorrentAddRequest(BaseModel):

@@ -143,7 +143,7 @@
           <div class="info-actions">
             <button id="meta-fav-btn" class="chip-btn" type="button">Favorite</button>
             <button id="meta-playlist-btn" class="chip-btn ghost" type="button">Playlist</button>
-            <button id="meta-mpv-btn" class="chip-btn ghost" type="button">MPV</button>
+
           </div>
         </div>
       </section>
@@ -213,16 +213,6 @@
             <p class="card-hint">Magnets and .torrent files stream via your AllDebrid account.</p>
             <div class="status-pill" id="alldebrid-status">Checking…</div>
           </div>
-          <div class="settings-card" id="mpv-box">
-            <h3>MPV Bridge</h3>
-            <p class="card-hint">Run <code>start-mpv-bridge.vbs</code> on your PC for MPV and blocked sites.</p>
-            <input id="mpv-path" type="text" placeholder="C:\mpv\mpv\mpv.exe" spellcheck="false" />
-            <div class="panel-actions">
-              <button class="chip-btn" id="mpv-save-path-btn" type="button">Save</button>
-              <button class="chip-btn ghost" id="mpv-test-btn" type="button">Test</button>
-            </div>
-            <div class="status-pill" id="mpv-bridge-status">Bridge offline</div>
-          </div>
         </div>
 
         <footer class="library-foot">
@@ -242,7 +232,7 @@
   <button id="loop-btn" type="button" hidden></button>
   <button id="shuffle-btn" type="button" hidden></button>
   <button id="screenshot-btn" type="button" hidden></button>
-  <button id="mpv-btn" type="button" hidden></button>
+
   <button id="torrent-add-btn" type="button" hidden></button>
   <button id="resolve-btn" type="button" hidden></button>
   <button id="mobile-fs-btn" type="button" hidden></button>
@@ -283,7 +273,7 @@
           <button type="button" class="action-tile" data-trigger="fav-btn">Favorite</button>
           <button type="button" class="action-tile" data-trigger="playlist-btn">Playlist</button>
           <button type="button" class="action-tile" data-trigger="download-btn">Download</button>
-          <button type="button" class="action-tile" data-trigger="mpv-btn">Open MPV</button>
+
           <button type="button" class="action-tile" data-trigger="resolve-btn">Inspect</button>
           <button type="button" class="action-tile" data-trigger="torrent-add-btn">Magnet</button>
           <button type="button" class="action-tile" data-trigger="screenshot-btn">Screenshot</button>
@@ -324,22 +314,7 @@
     </form>
   </dialog>
 
-  <dialog id="mpv-dialog" class="sheet-dialog">
-    <header class="sheet-head"><h3>Open in MPV</h3></header>
-    <p class="card-hint">Run <code>start-mpv-bridge.vbs</code> on your PC first.</p>
-    <div id="mpv-dialog-status" class="status-pill">Preparing…</div>
-    <div class="sheet-foot">
-      <button id="mpv-dialog-close" class="chip-btn ghost" type="button">Close</button>
-      <a id="mpv-dialog-link" class="btn-primary" href="#" target="_blank" rel="noopener">Launch</a>
-      <button id="mpv-dialog-form-btn" class="chip-btn ghost" type="button" hidden>Long URL</button>
-      <button id="mpv-dialog-copy" class="chip-btn ghost" type="button">Copy URL</button>
-    </div>
-    <form id="mpv-dialog-form" method="POST" action="http://127.0.0.1:9340/launch-form" target="_blank" hidden>
-      <input type="hidden" name="url" id="mpv-form-url" />
-      <input type="hidden" name="mpv" id="mpv-form-mpv" />
-      <input type="hidden" name="title" id="mpv-form-title" />
-    </form>
-  </dialog>
+
 
   <dialog id="playlist-dialog" class="sheet-dialog">
     <form method="dialog">

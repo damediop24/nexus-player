@@ -50,7 +50,7 @@ const HLS_MAX_BUFFER_SEC = 72000;  // ~20h - try to buffer as much as possible /
 
 const FIT_MODES = ['contain', 'cover', 'fill', 'none'];
 const FIT_LABELS = { contain: 'Fit', cover: 'Crop', fill: 'Stretch', none: 'Original' };
-const MPV_BRIDGE_PORT = '9340';
+
 let queue = [];
 let queueIndex = -1;
 let hideTimer = null;
@@ -495,17 +495,7 @@ function needsMpvInBrowser(ext) {
 }
 
 function needsMpvForCodec(info) {
-  if (!info) return false;
-  if (info.requires_mpv) return true;
-  const text = [
-    info.title,
-    info.source_url,
-    info.url,
-    streamExtFromInfo(info),
-  ].filter(Boolean).join(' ').toLowerCase();
-  if (/\b(x265|hevc|h\.?265|h265|10bit|hdr10|dolby.?vision)\b/.test(text)) return true;
-  if (/\b\.?mkv\b/.test(text) || text.includes('.mkv')) return true;
-  return needsMpvInBrowser(streamExtFromInfo(info));
+  return false; // MPV support removed
 }
 
 let blackVideoWatch = null;
@@ -526,8 +516,7 @@ function startBlackVideoWatch() {
     if (video.videoWidth === 0 && video.videoHeight === 0) {
       triggered = true;
       clearBlackVideoWatch();
-      toast('No picture in browser (codec not supported) — opening MPV…', 9000);
-      openInMpv().catch((e) => toast(formatPlayError(e), 6000));
+      toast('No picture in browser (codec not supported) — try another quality or direct link.', 9000);
     }
   }, 600);
 }
@@ -543,15 +532,15 @@ function onVideoElementError() {
   const detail = labels[code] || 'Video playback failed';
   const ext = streamExtFromInfo(currentMedia);
   const hint = needsMpvInBrowser(ext)
-    ? `Browsers cannot play .${ext} reliably — click MPV to play this file.`
-    : 'Try another quality, MPV, or a direct .mp4/.m3u8 link.';
+    ? `Browsers cannot play .${ext} reliably — try a different quality or direct .mp4/.m3u8 link.`
+    : 'Try another quality or a direct .mp4/.m3u8 link.';
   handlePlaybackError(detail, {
     message: detail,
     hint,
     retriable: true,
   });
   if (code === 3 || code === 4 || needsMpvForCodec(currentMedia)) {
-    openInMpv().catch((e) => toast(formatPlayError(e), 6000));
+    // MPV removed - suggest direct link or quality
   }
 }
 
@@ -617,7 +606,7 @@ function loadSource(url, type = 'progressive') {
       if (!e?.error) return;
       handlePlaybackError('DASH stream error', {
         message: e.error.message || 'DASH playback failed',
-        hint: 'Try another quality or open in MPV.',
+        hint: 'Try another quality or a direct link.',
         retriable: true,
       });
     });
@@ -680,8 +669,8 @@ function loadSource(url, type = 'progressive') {
         }
       }
       const hint = data.type === Hls.ErrorTypes.NETWORK_ERROR
-        ? 'Network error — stream may have expired. Replay the link or try MPV.'
-        : 'Try another quality or open in MPV.';
+        ? 'Network error — stream may have expired. Replay the link or try another quality.'
+        : 'Try another quality or a direct link.';
       handlePlaybackError('HLS stream error', {
         message: details,
         hint,
@@ -695,7 +684,7 @@ function loadSource(url, type = 'progressive') {
     loadProgressive(url);
     video.addEventListener('loadedmetadata', () => {
       if (video.duration > 0 && video.duration < 1 && video.seekable.length) {
-        toast('Stream looks invalid — try MPV or replay the magnet', 6000);
+        toast('Stream looks invalid — try another quality or direct link', 6000);
       }
     }, { once: true });
   }
@@ -1301,17 +1290,7 @@ function isBlockedSiteError(msg) {
 }
 
 function shouldTryLocalBridge(err) {
-  if (!err) return false;
-  if (
-    err.code === 'site_blocked'
-    || err.code === 'youtube_blocked'
-    || err.code === 'youtube_auth_required'
-    || err.code === 'kvs_failed'
-    || err.code === 'stremio_failed'
-  ) {
-    return true;
-  }
-  return err.retriable !== false && isBlockedSiteError(err.message);
+  return false; // MPV support removed
 }
 
 function formatPlayError(err) {
@@ -1331,85 +1310,9 @@ function handlePlaybackError(context, err) {
   if (nowPlaying) nowPlaying.textContent = 'Playback error';
 }
 
-function isModernBridge(data) {
-  return !!data?.ok && data.resolve === true && (data.version || 0) >= 2;
-}
 
-async function isLocalBridgeAvailable() {
-  try {
-    const res = await fetch(`http://127.0.0.1:${MPV_BRIDGE_PORT}/health`, { signal: AbortSignal.timeout(2000) });
-    if (!res.ok) return false;
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) return false;
-    const data = await res.json().catch(() => ({}));
-    return isModernBridge(data);
-  } catch (_) {
-    return false;
-  }
-}
 
-async function fetchBridgeResolve(url) {
-  const base = `http://127.0.0.1:${MPV_BRIDGE_PORT}`;
-  const opts = { signal: AbortSignal.timeout(120000) };
-  let res;
-  try {
-    res = await fetch(`${base}/resolve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-      ...opts,
-    });
-  } catch (_) {
-    res = await fetch(`${base}/resolve?url=${encodeURIComponent(url)}`, opts);
-  }
-  const ct = res.headers.get('content-type') || '';
-  if (!ct.includes('application/json')) {
-    throw attachApiError({
-      error: 'MPV bridge is outdated (port 9340 has an old version)',
-      code: 'bridge_outdated',
-      hint: 'Close old bridge windows, then double-click start-mpv-bridge.vbs from your latest Nexus Player folder.',
-      retriable: true,
-    }, 502);
-  }
-  const data = await res.json().catch(() => null);
-  if (!data) {
-    throw attachApiError({
-      error: 'Local bridge returned an invalid response',
-      code: 'bridge_invalid',
-      hint: 'Restart start-mpv-bridge.vbs from the Nexus Player folder on this PC.',
-      retriable: true,
-    }, 502);
-  }
-  if (!res.ok || data.error) throw attachApiError(data.error || data, res.status || 500);
-  if (!isModernBridge(data) && !data.stream_url && !data.streamUrl) {
-    throw attachApiError({
-      error: 'MPV bridge is outdated and cannot resolve links',
-      code: 'bridge_outdated',
-      hint: 'Double-click start-mpv-bridge.vbs from the latest Nexus Player folder (it will replace the old bridge).',
-      retriable: true,
-    }, 502);
-  }
-  return { res, data };
-}
 
-async function resolveViaLocalBridge(url) {
-  const { data } = await fetchBridgeResolve(url);
-  const streamUrl = data.stream_url || data.streamUrl;
-  if (!streamUrl) {
-    throw attachApiError({
-      error: 'Local bridge returned no stream URL',
-      code: 'bridge_no_stream',
-      hint: 'Log into YouTube in Chrome on this PC, restart start-mpv-bridge.vbs, then try again.',
-      retriable: true,
-    }, 502);
-  }
-  return {
-    ...data,
-    stream_url: streamUrl,
-    source_url: data.source_url || data.sourceUrl || url,
-    play_url: data.play_url || data.playUrl || null,
-  };
-}
 
 function applyPlayback(info, resumePos = 0) {
   currentMedia = info;
@@ -1419,8 +1322,7 @@ function applyPlayback(info, resumePos = 0) {
   populateSubtitles(info.subtitles || []);
 
   if (needsMpvForCodec(info)) {
-    toast('H.265/MKV video needs MPV — opening player…', 8000);
-    openInMpv().catch((e) => toast(formatPlayError(e), 6000));
+    toast('H.265/MKV video may need external player — try another quality or direct link.', 8000);
     recordPlayback(info);
     wsSend({ cmd: 'nowplaying', title: info.title, url: info.source_url });
     return;
@@ -1446,51 +1348,7 @@ function applyPlayback(info, resumePos = 0) {
   }
 }
 
-async function playViaLocalBridge(url, formatId = null, resumePos = 0) {
-  if (!(await isLocalBridgeAvailable())) {
-    throw attachApiError({
-      error: 'MPV bridge is not running on this PC',
-      code: 'bridge_offline',
-      hint: 'Double-click start-mpv-bridge.vbs on your Windows PC (logged into YouTube in Chrome), then try again.',
-      retriable: true,
-    }, 503);
-  }
-  toast('Cloud blocked — resolving on your PC...', 8000);
-  const resolved = await resolveViaLocalBridge(url);
-  let info;
-  try {
-    info = await api('/api/play/local', {
-      method: 'POST',
-      body: JSON.stringify({
-        source_url: resolved.source_url || url,
-        stream_url: resolved.stream_url,
-        title: resolved.title,
-        thumbnail: resolved.thumbnail,
-        duration: resolved.duration,
-        site: resolved.site,
-        headers: resolved.headers || {},
-        stream_type: resolved.stream_type || 'progressive',
-        content_type: resolved.content_type,
-        resolved_with: resolved.resolved_with || 'local-bridge',
-      }),
-    });
-  } catch (_) {
-    info = {
-      type: 'video',
-      title: resolved.title || 'Video',
-      source_url: resolved.source_url || url,
-      stream_type: resolved.stream_type || 'progressive',
-      formats: [],
-      subtitles: [],
-    };
-  }
-  if (resolved.play_url) {
-    info.play_url = resolved.play_url;
-    info.stream_type = resolved.stream_type || info.stream_type || 'progressive';
-  }
-  applyPlayback(info, resumePos);
-  toast('Playing via local bridge: ' + (info.title || 'media'), 5000);
-}
+
 
 async function playUrl(url, formatId = null, resumePos = 0) {
   if (!url) return;
@@ -1534,22 +1392,12 @@ async function playUrl(url, formatId = null, resumePos = 0) {
     applyPlayback(info, resumePos);
   } catch (e) {
     if (shouldTryLocalBridge(e)) {
-      if (!(await isLocalBridgeAvailable())) {
-        const bridgeHint = 'Double-click start-mpv-bridge.vbs from your latest Nexus Player folder (it replaces any old bridge on port 9340). Log into YouTube in Chrome first.';
-        handlePlaybackError('Blocked on cloud server', {
-          message: stringifyApiDetail(e.message) || 'Cloud resolve failed',
-          hint: e.hint ? `${e.hint} ${bridgeHint}` : bridgeHint,
-          code: e.code,
-        });
-        return;
-      }
-      try {
-        await playViaLocalBridge(url, formatId, resumePos);
-        return;
-      } catch (localErr) {
-        handlePlaybackError('Local resolve failed', localErr);
-        return;
-      }
+      handlePlaybackError('Blocked on cloud server', {
+        message: stringifyApiDetail(e.message) || 'Cloud resolve failed',
+        hint: e.hint || 'Try direct link, another quality, or local player.',
+        code: e.code,
+      });
+      return;
     }
     handlePlaybackError('Could not play link', e);
   } finally {
@@ -1718,18 +1566,14 @@ async function initStatus() {
   const remote = `http://${st.lan_ip}:${st.port}`;
   $('#remote-url').textContent = remote + ' (tap to copy)';
   $('#remote-url').onclick = () => { navigator.clipboard.writeText(remote); toast('Remote URL copied'); };
-  const mpvBtn = $('#mpv-btn');
-  mpvBtn.style.opacity = '1';
-  mpvBtn.title = st.mpv_server
-    ? 'Open in MPV (server or local)'
-    : 'Open in local MPV on your PC';
+
   if (!st.torrent_available && !st.alldebrid?.configured) {
     $('#torrent-add-btn').style.opacity = '0.4';
   } else {
     $('#torrent-add-btn').style.opacity = '1';
   }
   await initAlldebrid();
-  initMpvSettings();
+
   await syncLibrary();
   startTorrentPolling();
   refreshHistory();
@@ -1894,37 +1738,7 @@ $('#resolve-btn').addEventListener('click', async () => {
   } catch (e) { toast(formatPlayError(e), 6000); }
 });
 
-const DEFAULT_MPV_PATH = 'C:\\mpv\\mpv\\mpv.exe';
 
-function getMpvPath() {
-  return localStorage.getItem('nexus-mpv-path') || DEFAULT_MPV_PATH;
-}
-
-function setMpvPath(path) {
-  localStorage.setItem('nexus-mpv-path', path.trim() || DEFAULT_MPV_PATH);
-}
-
-function initMpvSettings() {
-  const input = $('#mpv-path');
-  if (!input) return;
-  input.value = getMpvPath();
-  refreshMpvBridgeStatus();
-}
-
-async function refreshMpvBridgeStatus() {
-  const el = $('#mpv-bridge-status');
-  if (!el) return;
-  const onLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(window.location.origin);
-  if (await isLocalBridgeAvailable()) {
-    el.textContent = 'Bridge running on this PC — MPV + local resolve for blocked sites';
-    el.classList.add('ok');
-    return;
-  }
-  el.textContent = onLocalhost
-    ? 'Bridge not running — double-click start-mpv-bridge.vbs'
-    : 'Run start-mpv-bridge.vbs on your PC — needed for YouTube and blocked sites';
-  el.classList.remove('ok');
-}
 
 function toAbsoluteUrl(path) {
   if (!path) return '';
@@ -1941,25 +1755,7 @@ async function copyText(text) {
   }
 }
 
-function buildMpvBridgeGetUrl(absUrl, title, referer = '') {
-  const q = new URLSearchParams({
-    url: absUrl,
-    mpv: getMpvPath(),
-    title: title || 'Nexus Player',
-  });
-  if (referer) q.set('referer', referer);
-  return `http://127.0.0.1:${MPV_BRIDGE_PORT}/launch?${q}`;
-}
 
-function launchMpvViaLaunchPage(absUrl, title) {
-  const page = new URL('/mpv-launch.html', window.location.origin);
-  page.searchParams.set('url', absUrl);
-  page.searchParams.set('mpv', getMpvPath());
-  page.searchParams.set('title', title || 'Nexus Player');
-  page.searchParams.set('port', MPV_BRIDGE_PORT);
-  const w = window.open(page.href, 'nexusMpvLaunch', 'width=440,height=180');
-  return !!w;
-}
 
 function tryOpenUrl(url, name) {
   const w = window.open(url, name || '_blank');
@@ -1975,44 +1771,10 @@ function tryOpenUrl(url, name) {
   return true;
 }
 
-function showMpvLaunchDialog(absUrl, title) {
-  const bridgeUrl = buildMpvBridgeGetUrl(absUrl, title);
-  const useForm = bridgeUrl.length > 5500 || absUrl.length > 1800;
-  const link = $('#mpv-dialog-link');
-  const formBtn = $('#mpv-dialog-form-btn');
-  const status = $('#mpv-dialog-status');
-  const form = $('#mpv-dialog-form');
 
-  if (link) {
-    if (useForm) {
-      link.hidden = true;
-      if (formBtn) formBtn.hidden = false;
-      if (form) {
-        form.action = `http://127.0.0.1:${MPV_BRIDGE_PORT}/launch-form`;
-        $('#mpv-form-url').value = absUrl;
-        $('#mpv-form-mpv').value = getMpvPath();
-        $('#mpv-form-title').value = title || 'Nexus Player';
-      }
-    } else {
-      link.hidden = false;
-      link.href = bridgeUrl;
-      if (formBtn) formBtn.hidden = true;
-    }
-  }
-
-  if (status) {
-    status.textContent = useForm
-      ? `${title || 'Video'} — long URL: click Launch (long URL) after starting the bridge.`
-      : `${title || 'Video'} — click Launch MPV (run start-mpv-bridge.vbs if nothing happens).`;
-  }
-
-  const dialog = $('#mpv-dialog');
-  if (dialog) dialog.dataset.streamUrl = absUrl;
-  dialog?.showModal();
-}
 
 async function launchResolvedInMpv(absUrl, title, referer = '') {
-  if ($('#mpv-path')?.value) setMpvPath($('#mpv-path').value);
+
   const bridgeUrl = buildMpvBridgeGetUrl(absUrl, title, referer);
   const useForm = bridgeUrl.length > 5500 || absUrl.length > 1800;
 
@@ -2209,42 +1971,9 @@ async function showAddToPlaylistDialog() {
   }
 }
 
-$('#mpv-btn').addEventListener('click', async () => {
-  try {
-    await openInMpv();
-  } catch (e) {
-    toast(e.message, 6000);
-  }
-});
 
-$('#mpv-save-path-btn')?.addEventListener('click', () => {
-  setMpvPath($('#mpv-path').value);
-  toast('MPV path saved: ' + getMpvPath());
-});
 
-$('#mpv-test-btn')?.addEventListener('click', () => {
-  setMpvPath($('#mpv-path').value);
-  const testUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-  tryOpenUrl(buildMpvBridgeGetUrl(testUrl, 'MPV test'), 'nexusMpvTest');
-  showMpvLaunchDialog(testUrl, 'MPV test');
-  toast('MPV test — run start-mpv-bridge.vbs if nothing opens', 8000);
-});
 
-$('#mpv-dialog-close')?.addEventListener('click', () => $('#mpv-dialog')?.close());
-$('#mpv-dialog-link')?.addEventListener('click', () => {
-  setTimeout(() => $('#mpv-dialog')?.close(), 600);
-});
-$('#mpv-dialog-form-btn')?.addEventListener('click', () => {
-  $('#mpv-dialog-form')?.requestSubmit();
-  toast('Sent to MPV bridge…');
-});
-$('#mpv-dialog-copy')?.addEventListener('click', async () => {
-  const url = $('#mpv-dialog')?.dataset.streamUrl;
-  if (url) {
-    await copyText(url);
-    toast('Stream URL copied');
-  }
-});
 
 $('#new-playlist-from-dialog')?.addEventListener('click', async () => {
   const name = prompt('Playlist name');
@@ -2277,7 +2006,7 @@ $('#fav-btn').addEventListener('click', () => addToFavorites());
 $('#playlist-btn')?.addEventListener('click', () => showAddToPlaylistDialog());
 $('#meta-fav-btn')?.addEventListener('click', () => addToFavorites());
 $('#meta-playlist-btn')?.addEventListener('click', () => showAddToPlaylistDialog());
-$('#meta-mpv-btn')?.addEventListener('click', () => openInMpv().catch((e) => toast(e.message, 6000)));
+
 
 $('#toggle-btn').addEventListener('click', () => {
   if (video.paused) {
@@ -2343,7 +2072,7 @@ video.addEventListener('dblclick', (e) => {
 video.addEventListener('error', () => {
   const err = video.error;
   const codes = { 1: 'Aborted', 2: 'Network error', 3: 'Decode error', 4: 'Source not supported' };
-  toast('Video error: ' + (codes[err?.code] || 'Unknown') + ' — try MPV or another quality', 6000);
+  toast('Video error: ' + (codes[err?.code] || 'Unknown') + ' — try another quality or direct link', 6000);
 });
 
 video.addEventListener('progress', () => updateBufferBar());
@@ -2531,7 +2260,7 @@ $$('.tab').forEach((tab) => {
     $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${tab.dataset.tab}`));
     if (tab.dataset.tab === 'library') refreshLibrary();
     if (tab.dataset.tab === 'torrent') refreshTorrents();
-    if (tab.dataset.tab === 'torrents') { initAlldebrid(); initMpvSettings(); refreshMpvBridgeStatus(); }
+    if (tab.dataset.tab === 'torrents') { initAlldebrid(); }
   });
 });
 

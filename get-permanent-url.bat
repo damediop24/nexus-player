@@ -1,13 +1,13 @@
 @echo off
-title Nexus Player - Permanent URL
+title Nexus Player - Permanent URL (Railway)
 echo.
-echo Your permanent URL will be:
+echo Your permanent URL will be provided by Railway after deploy.
 echo.
-echo   https://nexus-45gb8rj3.onrender.com
+echo Opening Railway...
+echo Sign in with GitHub, create project from repo, generate domain.
 echo.
-echo Opening Render deploy page...
-echo Sign in with GitHub, click Apply, then Deploy.
-echo.
-start https://render.com/deploy?repo=https://github.com/damediop24/nexus-player
+start https://railway.app
 start notepad "%~dp0PERMANENT-URL.txt"
+echo.
+echo See PERMANENT-URL.txt for full steps + how to add persistent volume.
 pause

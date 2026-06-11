@@ -175,7 +175,7 @@ def _classify_resolve_error(exc, url):
             return ResolveError(
                 msg,
                 code='youtube_blocked',
-                hint='YouTube blocked this server. Use the MPV bridge on your PC or add cookies.txt to the server.',
+                hint='YouTube blocked this server. Add cookies.txt to the server or try a different link.',
                 retriable=True,
                 site='youtube',
             )
@@ -193,7 +193,7 @@ def _classify_resolve_error(exc, url):
         return ResolveError(
             msg,
             code='site_blocked',
-            hint='Site blocked cloud servers. Use MPV bridge or paste a direct media link.',
+            hint='Site blocked cloud servers. Try a direct media link (.mp4 / .m3u8) or local player.',
             retriable=True,
             site=site,
         )
@@ -211,7 +211,7 @@ def _classify_resolve_error(exc, url):
         url_lower = url.lower()
         hint = (
             'Torrentio/debrid link may be expired, or the cloud server was blocked. '
-            'Get a fresh link from Stremio, or use MPV for .mkv/.avi files.'
+            'Get a fresh link from Stremio, or try direct .mp4/.m3u8.'
         )
         if any(x in url_lower for x in ('.mkv', 'x265', 'hevc', '.avi', '.wmv', '.flv')):
             hint = (
@@ -229,7 +229,7 @@ def _classify_resolve_error(exc, url):
     return ResolveError(
         msg,
         code='resolve_failed',
-        hint='Try another quality, MPV, or a direct stream link (.mp4 / .m3u8).',
+        hint='Try another quality or a direct stream link (.mp4 / .m3u8).',
         retriable=True,
         site=site,
     )
@@ -889,18 +889,6 @@ def _resolve_stremio_url(url):
     return None
 
 
-def _requires_mpv_playback(title='', url='', ext=''):
-    text = f'{title} {url}'.lower()
-    ext_l = (ext or '').lower().lstrip('.')
-    if any(token in text for token in ('x265', 'hevc', 'h265', 'h.265', '10bit', 'hdr10', 'dolby vision')):
-        return True
-    if ext_l in ('mkv', 'avi', 'wmv', 'flv', 'vob', 'rm', 'rmvb', 'ts', 'm2ts'):
-        return True
-    if ext_l == 'mkv' or text.endswith('.mkv'):
-        return True
-    return False
-
-
 def _resolve_stremio_stream(url):
     title = _title_from_stremio_url(url)
     final_url = None
@@ -943,11 +931,11 @@ def _resolve_stremio_stream(url):
     result['url'] = url
     result['title'] = title
     if torrentio_meta:
-        result['requires_mpv'] = torrentio_meta.get('requires_mpv', _requires_mpv_playback(title, url, ext))
+        result['requires_mpv'] = False
         if torrentio_meta.get('filesize'):
             result['formats'][0]['filesize'] = torrentio_meta['filesize']
     else:
-        result['requires_mpv'] = _requires_mpv_playback(title, url, ext)
+        result['requires_mpv'] = False
     return result
 
 
@@ -1190,7 +1178,7 @@ def _resolve_shemale6(url):
         raise ResolveError(
             'No video source found on Shemale6 page',
             code='no_stream',
-            hint='Page may be protected or use new embed. Try MPV or direct .mp4/.m3u8 link.',
+            hint='Page may be protected or use new embed. Try direct .mp4/.m3u8 link.',
             retriable=False,
             site='shemale6.com',
         )
@@ -1240,6 +1228,73 @@ def _resolve_shemale6(url):
     result['site'] = 'shemale6'
     result['resolved_with'] = 'shemale6-scraper'
     return result
+
+
+def _universal_video_scrape(url):
+    """Powerful generic scraper for tube sites using playwright to render JS and extract video sources from common patterns.
+    Supports many sites: xvideos, xhamster, spankbang, pornhub, youporn, redtube, tube8, youjizz, beeg, chaturbate, stripchat, bongacams, camsoda, livejasmin, myfreecams, cam4, flirt4free, streamate, imlive, empflix, tnaflix, drtuber, keezmovies, spankwire, pornerbros, mofosex, xtube, pornotube, camster, shemale6, erome, and any similar.
+    """
+    if not HAS_PLAYWRIGHT:
+        return None
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            context = browser.new_context(
+                user_agent=BROWSER_UA,
+                extra_http_headers={"Referer": url}
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="networkidle", timeout=45000)
+            page.wait_for_timeout(3000)
+            html = page.content()
+            browser.close()
+
+            candidates = []
+            seen = set()
+            # Broad patterns for any tube site player
+            patterns = [
+                r'<source[^>]+src=["\']([^"\']+\.(?:mp4|m3u8)[^"\']*)',
+                r'data-(?:src|video|file|url)=["\']([^"\']+\.(?:mp4|m3u8)[^"\']*)',
+                r'["\']?(?:file|src|video|url|source)["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8)[^"\']*)["\']',
+                r'flashvars\s*=\s*\{[^}]*["\']?(?:file|src)["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+                r'sources\s*:\s*\[\s*\{[^}]*["\']?src["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+                r'player\s*\(\s*\{[^}]*["\']?src["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+                r'["\']hd["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+                r'video_url\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+                r'https?://[^"\s\'<>]+?\.(?:mp4|m3u8)[^"\s\'<>]*',
+            ]
+            for pat in patterns:
+                for m in re.finditer(pat, html, re.I | re.S):
+                    v = m.group(1) if m.lastindex else m.group(0)
+                    v = v.strip('",\' ')
+                    if '?' in v:
+                        v = v.split('?')[0].rstrip('/')
+                    v = urljoin(url, v)
+                    if v not in seen and ('.mp4' in v.lower() or '.m3u8' in v.lower()):
+                        seen.add(v)
+                        candidates.append(v)
+            if candidates:
+                # pick last as often the main/full
+                return candidates[-1]
+    except Exception as e:
+        print(f"[universal-scrape] failed for {url}: {e}")
+    return None
+
+
+TUBE_HOSTS = [
+    'xvideos.com', 'xhamster.com', 'spankbang.com', 'pornhub.com', 'youporn.com',
+    'redtube.com', 'tube8.com', 'youjizz.com', 'beeg.com', 'chaturbate.com',
+    'stripchat.com', 'bongacams.com', 'camsoda.com', 'livejasmin.com', 'myfreecams.com',
+    'cam4.com', 'flirt4free.com', 'streamate.com', 'imlive.com', 'empflix.com',
+    'tnaflix.com', 'drtuber.com', 'keezmovies.com', 'spankwire.com', 'pornerbros.com',
+    'mofosex.com', 'xtube.com', 'pornotube.com', 'camster.com', 'shemale6.com', 'erome.com'
+]
+
+
+def _is_tube_host(url):
+    host = _host_key(urlparse(url).netloc)
+    return any(h in host for h in TUBE_HOSTS)
 
 
 def _filename_from_disposition(value):
@@ -1413,7 +1468,7 @@ def _direct_media_response(url, probe=None):
         'content_type': content_type,
         'subtitles': [],
         'headers': headers,
-        'requires_mpv': _requires_mpv_playback(title, url, ext),
+        'requires_mpv': False,
     }
 
 
@@ -1515,6 +1570,26 @@ def resolve_url(url, format_id=None):
             if not _is_retriable(exc):
                 raise _classify_resolve_error(exc, url) from exc
 
+    if _is_tube_host(url):
+        try:
+            stream = _universal_video_scrape(url)
+            if stream:
+                ext = 'm3u8' if '.m3u8' in stream.lower() else 'mp4'
+                stream_type = 'hls' if ext == 'm3u8' else 'progressive'
+                return _direct_media_response(stream, {
+                    'ext': ext,
+                    'stream_type': stream_type,
+                    'title': 'Video',
+                    'filesize': None,
+                    'content_type': 'application/vnd.apple.mpegurl' if ext == 'm3u8' else 'video/mp4',
+                    'headers': {'Referer': url, 'User-Agent': BROWSER_UA},
+                })
+        except ResolveError:
+            raise
+        except Exception as exc:
+            if not _is_retriable(exc):
+                raise _classify_resolve_error(exc, url) from exc
+
     if _looks_like_cdn_download(url):
         probe = _probe_direct_url(url)
         if probe:
@@ -1529,7 +1604,7 @@ def resolve_url(url, format_id=None):
                 raise ResolveError(
                     str(kvs_error),
                     code='kvs_failed',
-                    hint='This site embeds video that cloud servers cannot scrape. Try MPV bridge or a direct link.',
+                    hint='This site embeds video that cloud servers cannot scrape. Try a direct link.',
                     retriable=True,
                     site=_host_key(urlparse(url).netloc),
                 ) from kvs_error
@@ -1555,7 +1630,7 @@ def resolve_url(url, format_id=None):
                 raise ResolveError(
                     'No playable stream found',
                     code='no_stream',
-                    hint='Try another quality from the menu, or open in MPV.',
+                    hint='Try another quality from the menu, or a direct link.',
                     retriable=True,
                     site=_host_key(urlparse(url).netloc),
                 )
@@ -1624,36 +1699,3 @@ def download_media(url, format_id=None, on_progress=None):
     raise RuntimeError(str(last_error))
 
 
-def find_mpv():
-    path = shutil.which('mpv')
-    if path:
-        return path
-    candidates = [
-        Path(r'C:\Program Files\MPV Player\mpv.exe'),
-        Path(r'C:\mpv\mpv\mpv.exe'),
-        Path(r'C:\Program Files\mpv\mpv.exe'),
-        Path(r'C:\Program Files (x86)\mpv\mpv.exe'),
-        Path.home() / 'AppData' / 'Local' / 'Microsoft' / 'WinGet' / 'Links' / 'mpv.exe',
-    ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
-    return None
-
-
-def launch_mpv(url, title=None, headers=None):
-    mpv = find_mpv()
-    if not mpv:
-        raise FileNotFoundError('MPV not found')
-
-    args = [mpv, '--force-window=immediate', f'--title={title or "Nexus Player"}']
-
-    if headers:
-        if headers.get('User-Agent'):
-            args.append(f'--user-agent={headers["User-Agent"]}')
-        if headers.get('Referer'):
-            args.append(f'--referrer={headers["Referer"]}')
-
-    args.append(url)
-    subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return mpv

@@ -1,27 +1,154 @@
 ============================================
-  NEXUS PLAYER - PERMANENT FREE URL
+  NEXUS PLAYER - PERMANENT FREE URL (Railway)
 ============================================
 
-Your permanent URL (after 1-click deploy):
+Your permanent URL (after deploy):
 
+  https://YOUR-PROJECT.up.railway.app
+  (https://nexus-45gb8rj3-production.up.railway.app/)
+
+Replace the placeholder above with the real domain you get from Railway.
+This URL stays the same for the life of the project.
+
+--------------------------------------------
+ACTIVATE / SETUP IT NOW (2-4 minutes, one time):
+--------------------------------------------
+
+1. Open Railway:
+   https://railway.app
+
+2. Sign in with GitHub (same account as your nexus-player repo: damediop24)
+
+3. Click "New Project" → "Deploy from GitHub repo"
+   Select the `nexus-player` repository.
+
+4. Wait for the first deploy to complete (~2-5 min).
+   Railway builds from the included Dockerfile automatically.
+
+5. Once deployed:
+   - Go to your project → the service (web)
+   - Click the "Settings" tab
+   - Under "Networking" click "Generate Domain"
+   - Copy the generated URL (e.g. https://nexus-player-abc123.up.railway.app)
+
+6. Paste that URL into this file (replace the placeholder) and save.
+   Open the player: that URL
+
+7. (Recommended for persistence) Add a Volume for the database:
+   - In the service → Settings (or use Ctrl+K Command Palette → "Add Volume")
+   - Mount path: /data
+   - Size: Railway sets a default based on your plan (Free/Trial = 0.5GB, Hobby = 5GB, etc.). You usually don't pick the size during initial creation — it uses the plan default.
+   - This keeps nexus.db (history, settings) across restarts/deploys.
+
+   See below for how to view current size or increase it later.
+
+   Or use the Railway CLI (console) — see the "CLI Volume Commands" section below.
+
+Optional: Set ALLDEBRID_API_KEY in the service Variables if you use it
+(same value you had on Render).
+
+--------------------------------------------
+CLI VOLUME COMMANDS (for console / PowerShell)
+--------------------------------------------
+
+⚠️ CRITICAL: Run these on YOUR LOCAL Windows PC only (normal PowerShell/CMD).
+DO NOT paste them into the Railway container shell (the "root@02198321bd2c:/app/backend#" prompt you are seeing).
+The container is a tiny Python image with no Node/npm. The Railway CLI manages your project from outside.
+
+Open a regular PowerShell window on your own Windows computer and run the commands below.
+
+1. Install the Railway CLI (one time):
+   (Requires Node.js — download from https://nodejs.org if "npm" is not found)
+
+   ```powershell
+   npm install -g @railway/cli
+   railway --version
+   ```
+
+2. Login (opens browser):
+   ```powershell
+   railway login
+   ```
+
+3. Link to your project:
+   ```powershell
+   railway link
+   ```
+   Follow the prompts and select your Nexus Player project/service.
+
+4. Create + attach the persistent volume at /data:
+   Interactive (recommended):
+   ```powershell
+   railway volume add --mount /data
+   ```
+   or
+   ```powershell
+   railway volume create --mount /data
+   ```
+   (It will prompt for service and confirm the mount path `/data`.)
+
+   Non-interactive (if you know the exact service name from dashboard):
+   ```powershell
+   railway volume add --service YOUR-SERVICE-NAME --mount /data
+   ```
+
+5. Redeploy the service so the volume is mounted:
+   ```powershell
+   railway redeploy
+   ```
+   (Alternative: double-click your `redeploy-railway.bat` or trigger "Redeploy" in the dashboard.)
+
+6. Verify the volume:
+   ```powershell
+   railway volume ls
+   # or
+   railway volume list
+   ```
+
+After this, your /data/nexus.db will be on persistent storage.
+
+**How to view or change the volume size (after creation):**
+1. Open your project in the Railway dashboard.
+2. Click on the Nexus Player **service**.
+3. Go to **Settings** tab (or look for the Volumes section/panel).
+4. Find your volume (it will show the mount path `/data`).
+5. Click the volume name or the settings icon for it.
+6. You will see **Volume Size** showing the current capacity (e.g. 0.5 GB on Free plan, shown as ~434M usable inside the container).
+7. If available (on Hobby or paid plans), click **Live Resize** or the expand option and choose a larger size (1GB, 5GB, etc.).
+   - Free plan default is 0.5GB — this is usually plenty for the Nexus SQLite database.
+   - You cannot decrease size later.
+
+**Note:** 0.5GB (shown as ~434M inside the container after formatting) is more than enough for Nexus Player (the DB is tiny, e.g. 40KB in the example). Only increase if you plan heavy usage or are on a paid plan. After attaching/redeploy, run `df -h /data` inside the container shell to see the exact mounted size.
+
+Tip: To see services: `railway service ls` or `railway status`
+
+If you get permission issues later (rare with our Dockerfile), you can add the env var `RAILWAY_RUN_UID=0` in the service Variables.
+
+---
+
+EASIEST METHOD (no npm, no local install needed):
+Use the Railway Dashboard Command Palette:
+
+1. Open your project in the Railway web dashboard.
+2. Make sure you are viewing the project canvas (the graph with your service box).
+3. Press **Ctrl + K** (or Cmd + K on Mac).
+4. Type "volume" or "add volume" and select the option.
+5. Choose your Nexus Player service.
+6. Set Mount Path exactly to: `/data`
+7. Choose a size (1 GB is fine).
+8. Confirm.
+9. Then click the service → "Deploy" / "Redeploy" (or push to GitHub).
+
+This is often the fastest way if the regular Volumes tab is hard to find.
+
+--------------------------------------------
+Notes:
+- First load after idle may have a short cold-start delay.
+- Cloud deploys run the web player only (bot stays local).
+- To update later: push to GitHub main branch → Railway auto-deploys (or manual "Redeploy").
+- Alternative hosts: Fly.io (fly.toml included) or keep old Render if needed.
+
+============================================
+Previous Render URL (for reference):
   https://nexus-45gb8rj3.onrender.com
-
-This URL never changes. Free forever on Render.
-(First load after idle may take ~30 seconds.)
-
---------------------------------------------
-ACTIVATE IT NOW (2 minutes, one time):
---------------------------------------------
-
-1. Open this link:
-   https://render.com/deploy?repo=https://github.com/damediop24/nexus-player
-
-2. Sign in with GitHub (damediop24)
-
-3. Click "Apply" then "Deploy"
-
-4. Wait ~5 minutes
-
-5. Open: https://nexus-45gb8rj3.onrender.com
-
 ============================================

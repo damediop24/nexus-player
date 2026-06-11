@@ -140,34 +140,38 @@ winget install shinchiro.mpv
 
 ## Deploy Online (public URL)
 
-GitHub hosts the **code**, not a running player. To get a public URL like `https://nexus-player.onrender.com`, deploy to a cloud host.
+GitHub hosts the **code**, not a running player. To get a permanent public URL (like the old Render one), deploy to a cloud host.
 
-### Option A — Render (free, easiest)
+**Current recommended permanent host (non-Render):** Railway — use the included `deploy-railway.bat`, `get-permanent-url.bat`, and `railway.toml`. See `PERMANENT-URL.txt` for one-click-style instructions and the live URL.
 
-1. Go to [render.com](https://render.com) and sign up with GitHub
-2. **New +** → **Blueprint** (or **Web Service**)
-3. Connect repo: `damediop24/nexus-player`
-4. Render detects `render.yaml` and `Dockerfile` automatically
-5. Click **Deploy** — wait ~5 minutes
-6. Your player URL will be shown, e.g. `https://nexus-player.onrender.com`
+### Option A — Railway (recommended permanent link, similar to Render)
 
-> Free tier sleeps after 15 min idle — first visit may take ~30s to wake up.
+1. Run `deploy-railway.bat` (or go to [railway.app](https://railway.app))
+2. Sign in with GitHub → **New Project** → **Deploy from GitHub repo** → pick `nexus-player`
+3. Wait for the Docker build to finish.
+4. In the service **Settings** → **Networking** → **Generate Domain**
+5. (Strongly recommended) Add a **Volume** mounted at `/data` for persistent DB.
+6. Your permanent URL will be something like `https://your-project.up.railway.app`
 
-### Option B — Railway
+Use `redeploy-railway.bat` later to trigger updates. Push to GitHub main for auto-deploy.
 
-1. Go to [railway.app](https://railway.app) and sign up with GitHub
-2. **New Project** → **Deploy from GitHub repo** → select `nexus-player`
-3. Railway uses the included `Dockerfile`
-4. Open **Settings** → **Networking** → **Generate Domain**
-5. Use that URL (e.g. `https://nexus-player-production.up.railway.app`)
+> Free tier has usage limits and may sleep after inactivity.
 
-### Option C — Fly.io
+### Option B — Fly.io
 
 ```bash
 fly launch --from nexus-player
 fly deploy
 fly open
 ```
+
+(Uses the included `fly.toml`. Adjust `min_machines_running` if you want less sleeping.)
+
+### Option C — Render (previous host)
+
+Kept for reference (old URL was `https://nexus-45gb8rj3.onrender.com`):
+- `render.yaml` + `deploy-render.bat` + `redeploy-render.bat` still present.
+- Avoided this time per request — use Railway instead for the new permanent link.
 
 ### Cloud limitations
 

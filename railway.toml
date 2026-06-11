@@ -7,3 +7,13 @@ healthcheckPath = "/api/status"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+
+# Notes for Railway deployment:
+# - Railway automatically provides the PORT env var. The app respects it.
+# - For a permanent database (history, queue, settings), add a Volume in the
+#   Railway dashboard for this service:
+#     Mount path: /data
+#   (The Dockerfile creates /data and DATABASE_PATH=/data/nexus.db)
+# - Add ALLDEBRID_API_KEY (and other secrets) in the Variables tab.
+# - Generate a custom domain under Settings > Networking after first deploy.
+# - This config + Dockerfile gives a Render-like experience without using Render.
