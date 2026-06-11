@@ -45,8 +45,8 @@ let prefetchController = null;
 let prefetchBlobUrl = null;
 let prefetchFileUrl = null;
 let prefetchState = { percent: 0, active: false, url: null };
-const MAX_BLOB_CACHE = 2 * 1024 * 1024 * 1024;
-const HLS_MAX_BUFFER_SEC = 72000;
+const MAX_BLOB_CACHE = 4 * 1024 * 1024 * 1024;  // allow larger full prefetches for "buffer till end"
+const HLS_MAX_BUFFER_SEC = 72000;  // ~20h - try to buffer as much as possible / till end
 
 const FIT_MODES = ['contain', 'cover', 'fill', 'none'];
 const FIT_LABELS = { contain: 'Fit', cover: 'Crop', fill: 'Stretch', none: 'Original' };
@@ -454,6 +454,9 @@ async function startFullPrefetch(url, signal) {
 
   prefetchState.url = url;
   try {
+    // Strong "buffer till the end" prebuffering for direct progressive links (shemale6, erome, etc.)
+    // Prioritize full file download via OPFS (large files) or Blob so the video is fully local and plays smoothly.
+    // This optimizes prefetch to complete 100% and swap to local blob for zero server dependency after initial load.
     if (await hasOpfs()) {
       await prefetchToOpfs(url, total, signal);
       return;
@@ -463,6 +466,7 @@ async function startFullPrefetch(url, signal) {
       return;
     }
     await prefetchProgressOnly(url, total, signal);
+    setPrefetchPercent(100);  // force "buffered till end" indicator
   } catch (err) {
     if (err.name !== 'AbortError') prefetchState.active = false;
   }
@@ -561,20 +565,22 @@ function buildHlsConfig() {
   const base = {
     enableWorker: true,
     maxMaxBufferLength: HLS_MAX_BUFFER_SEC,
-    maxBufferSize: 16 * 1024 * 1024 * 1024,
-    backBufferLength: 300,
+    maxBufferSize: 32 * 1024 * 1024 * 1024,  // larger for strong buffering
+    backBufferLength: 600,
     progressive: true,
     startFragPrefetch: true,
+    maxLoadingDelay: 0,
+    maxStarvationDelay: 2,
   };
-  if (!isXvideosMedia(currentMedia)) {
-    return { ...base, maxBufferLength: 600 };
-  }
   const dur = Number(currentMedia?.duration) || 0;
+  if (!isXvideosMedia(currentMedia)) {
+    // Strong prebuffering: aim to buffer as much as possible / till end
+    const target = dur > 0 ? Math.ceil(dur) + 600 : 7200;  // at least 2h or full+margin
+    return { ...base, maxBufferLength: Math.max(target, 3600) };
+  }
   return {
     ...base,
-    maxBufferLength: Math.max(dur + 120, 3600),
-    maxLoadingDelay: 0,
-    maxStarvationDelay: 1,
+    maxBufferLength: Math.max(dur + 300, 7200),
     testBandwidth: false,
     capLevelToPlayerSize: false,
     abrEwmaDefaultEstimate: 50000000,

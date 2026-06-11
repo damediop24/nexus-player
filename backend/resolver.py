@@ -42,6 +42,7 @@ _YOUTUBE_HOSTS = (
 _URL_IN_TEXT_RE = re.compile(r'https?://[^\s<>"\']+|magnet:\?[^\s<>"\']+', re.I)
 
 _EROME_MP4_RE = re.compile(r'https?://v\d+\.erome\.com/[^\s"\'<>]+\.mp4', re.I)
+_SHEMALE6_VIDEO_RE = re.compile(r'https?://[^"\s\'<>]+\.(?:mp4|m3u8)[^"\s\'<>]*', re.I)
 
 
 class ResolveError(Exception):
@@ -86,6 +87,18 @@ def _is_erome_page_url(url):
     if re.match(r'^v\d+\.', host):
         return False
     return True
+
+
+def _is_shemale6_host(url):
+    host = _host_key(urlparse(url).netloc)
+    return 'shemale6.com' in host
+
+
+def _is_shemale6_page_url(url):
+    if not _is_shemale6_host(url):
+        return False
+    lower = url.lower()
+    return '/videos/' in lower or '/video/' in lower
 
 
 def normalize_play_url(url):
@@ -964,6 +977,8 @@ def _referer_for_url(url):
         return 'https://mypikpak.com/'
     if 'erome.com' in host:
         return 'https://www.erome.com/'
+    if 'shemale6.com' in host:
+        return 'https://www.shemale6.com/'
     if parsed.scheme and parsed.netloc:
         return f'{parsed.scheme}://{parsed.netloc}/'
     return url
@@ -1042,6 +1057,97 @@ def _resolve_erome(url):
         'url': url,
         'resolved_with': 'erome-scraper',
     }
+
+
+def _resolve_shemale6(url):
+    """Custom scraper for shemale6.com similar to erome.
+    Extracts direct MP4 or HLS from page HTML (bypasses failing yt-dlp generic flashvars).
+    """
+    headers = {
+        'User-Agent': BROWSER_UA,
+        'Referer': 'https://www.shemale6.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+
+    with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=30.0)) as client:
+        resp = client.get(url, headers=headers)
+        if resp.status_code in (403, 429):
+            raise RuntimeError('Shemale6 blocked this server (403/429)')
+        resp.raise_for_status()
+        html = resp.text
+
+    title_match = re.search(r'<title>([^<]+)</title>', html, re.I)
+    title = title_match.group(1).strip() if title_match else 'Shemale6'
+    title = re.sub(r'\s*[-|]\s*Shemale6.*$', '', title, flags=re.I).strip() or 'Shemale6 Video'
+
+    videos = []
+    seen = set()
+    for match in _SHEMALE6_VIDEO_RE.findall(html):
+        clean = match.rstrip('",\' ')
+        if clean not in seen and ('.mp4' in clean.lower() or '.m3u8' in clean.lower()):
+            seen.add(clean)
+            videos.append(clean)
+
+    # Fallback patterns for flashvars / player config / source tags (the error "Unable to extract flashvars" suggests this)
+    if not videos:
+        # flashvars style
+        for pat in [
+            r'flashvars\s*[:=]\s*\{[^}]*?["\']?file["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+            r'["\']?src["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+            r'["\']?file["\']?\s*:\s*["\']([^"\']+\.(?:mp4|m3u8))',
+            r'data-(?:src|video|url)=["\']([^"\']+\.(?:mp4|m3u8))',
+        ]:
+            m = re.search(pat, html, re.I | re.S)
+            if m:
+                v = m.group(1)
+                if v not in seen:
+                    videos.append(v)
+                    break
+
+        # last resort broad source tag
+        if not videos:
+            m = re.search(r'<source[^>]+src=["\']([^"\']+\.(?:mp4|m3u8)[^"\']*)', html, re.I)
+            if m:
+                v = m.group(1)
+                if v not in seen:
+                    videos.append(v)
+
+    if not videos:
+        raise ResolveError(
+            'No video source found on Shemale6 page',
+            code='no_stream',
+            hint='Page may be protected or use new embed. Try MPV or direct .mp4/.m3u8 link.',
+            retriable=False,
+            site='shemale6.com',
+        )
+
+    # Prefer last (often highest quality or direct)
+    stream_url = videos[-1]
+
+    stream_headers = {
+        'User-Agent': BROWSER_UA,
+        'Referer': url,
+        'Accept': '*/*',
+        'Origin': 'https://www.shemale6.com',
+    }
+
+    ext = 'm3u8' if '.m3u8' in stream_url.lower() else 'mp4'
+    stream_type = 'hls' if ext == 'm3u8' else 'progressive'
+
+    result = _direct_media_response(stream_url, {
+        'ext': ext,
+        'stream_type': stream_type,
+        'title': title,
+        'filesize': None,
+        'content_type': 'application/vnd.apple.mpegurl' if ext == 'm3u8' else 'video/mp4',
+        'headers': stream_headers,
+    })
+    result['url'] = url
+    result['title'] = title
+    result['site'] = 'shemale6'
+    result['resolved_with'] = 'shemale6-scraper'
+    return result
 
 
 def _filename_from_disposition(value):
@@ -1293,6 +1399,15 @@ def resolve_url(url, format_id=None):
     if _is_erome_page_url(url):
         try:
             return _resolve_erome(url)
+        except ResolveError:
+            raise
+        except Exception as exc:
+            if not _is_retriable(exc):
+                raise _classify_resolve_error(exc, url) from exc
+
+    if _is_shemale6_page_url(url):
+        try:
+            return _resolve_shemale6(url)
         except ResolveError:
             raise
         except Exception as exc:
