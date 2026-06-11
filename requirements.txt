@@ -15,4 +15,5 @@ pyleaves
 python-dotenv
 psutil
 pillow
+playwright
 # TgCrypto  # uncomment after installing C++ Build Tools for faster MTProto if desired: pip install tgcrypto

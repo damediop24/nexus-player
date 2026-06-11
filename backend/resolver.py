@@ -1072,22 +1072,43 @@ def _resolve_shemale6(url):
     }
 
     html = None
-    if HAS_CURL_CFFI:
-        try:
-            from curl_cffi import requests as curl_requests
-            resp = curl_requests.get(
-                url,
-                headers=headers,
-                impersonate="chrome110",
-                timeout=30,
-                allow_redirects=True,
+    # Use Playwright to render the page (executes JS, gets full player sources that may be loaded dynamically)
+    # This solves teaser/preview vs full video issues on sites like shemale6.com
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            context = browser.new_context(
+                user_agent=BROWSER_UA,
+                extra_http_headers={"Referer": "https://www.shemale6.com/"}
             )
-            if resp.status_code in (403, 429):
-                raise RuntimeError('Shemale6 blocked this server (403/429)')
-            resp.raise_for_status()
-            html = resp.text
-        except Exception:
-            html = None  # fall back to httpx
+            page = context.new_page()
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            # Wait a bit more for player to init if needed
+            page.wait_for_timeout(2000)
+            html = page.content()
+            browser.close()
+    except Exception as e:
+        print(f"[shemale6] Playwright failed ({e}), falling back to curl/httpx")
+        html = None
+
+    if html is None:
+        if HAS_CURL_CFFI:
+            try:
+                from curl_cffi import requests as curl_requests
+                resp = curl_requests.get(
+                    url,
+                    headers=headers,
+                    impersonate="chrome110",
+                    timeout=30,
+                    allow_redirects=True,
+                )
+                if resp.status_code in (403, 429):
+                    raise RuntimeError('Shemale6 blocked this server (403/429)')
+                resp.raise_for_status()
+                html = resp.text
+            except Exception:
+                html = None
 
     if html is None:
         with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=30.0)) as client:
