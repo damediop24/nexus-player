@@ -1121,6 +1121,9 @@ def _resolve_shemale6(url):
                 seen.add(v)
                 videos.append(v)
 
+    # Filter obvious previews/trailers
+    videos = [v for v in videos if not any(x in v.lower() for x in ['preview', 'trailer', 'thumb', 'sample', 'teaser', 'short'])]
+
     if not videos:
         raise ResolveError(
             'No video source found on Shemale6 page',
@@ -1130,15 +1133,34 @@ def _resolve_shemale6(url):
             site='shemale6.com',
         )
 
-    # Prefer last (often highest quality or direct)
-    stream_url = videos[-1]
-
+    # Pick the largest file by content-length (full 7min video vs 20s preview)
     stream_headers = {
         'User-Agent': BROWSER_UA,
         'Referer': url,
         'Accept': '*/*',
         'Origin': 'https://www.shemale6.com',
     }
+    candidates = []
+    for v in videos:
+        try:
+            r = httpx.head(v, headers=stream_headers, timeout=10, follow_redirects=True)
+            size = 0
+            cl = r.headers.get('content-length')
+            if cl:
+                size = int(cl)
+            else:
+                cr = r.headers.get('content-range', '')
+                if '/' in cr:
+                    size = int(cr.split('/')[-1])
+            candidates.append((size, v))
+        except Exception:
+            candidates.append((0, v))
+
+    if candidates:
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        stream_url = candidates[0][1]
+    else:
+        stream_url = videos[-1]
 
     ext = 'm3u8' if '.m3u8' in stream_url.lower() else 'mp4'
     stream_type = 'hls' if ext == 'm3u8' else 'progressive'
